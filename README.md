@@ -1,4 +1,4 @@
-# Clueso Clone - AI Video Editor
+# Clueso AI Editor
 
 > A professional AI-powered video editing platform with intelligent voiceover generation and editing capabilities.
 
@@ -49,7 +49,7 @@
 ### 1. Clone the Repository
 ```bash
 git clone <repository-url>
-cd cluesoooo
+cd Clueso_AI_Editor
 ```
 
 ### 2. Install Dependencies
@@ -123,7 +123,7 @@ npm run dev
 ## 📁 Project Structure
 
 ```
-cluesoooo/
+Clueso_AI_Editor/
 ├── backend/
 │   ├── config/          # Configuration files
 │   ├── models/          # MongoDB models

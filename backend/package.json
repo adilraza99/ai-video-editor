@@ -1,7 +1,7 @@
 {
-    "name": "clueso-clone-backend",
+    "name": "clueso-ai-editor-backend",
     "version": "1.0.0",
-    "description": "Backend for Clueso Clone - AI-powered video editing platform",
+    "description": "Backend for Clueso AI Editor - AI-powered video editing platform",
     "main": "server.js",
     "type": "module",
     "scripts": {

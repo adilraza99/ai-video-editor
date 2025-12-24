@@ -1,6 +1,6 @@
 # 🎉 Setup Complete!
 
-Your Clueso Clone application is fully set up and ready to run!
+Your Clueso AI Editor application is fully set up and ready to run!
 
 ## ✅ Installed Components
 
@@ -54,7 +54,7 @@ npm run dev
 ## 📁 Project Structure
 
 ```
-cluesoooo/
+Clueso_AI_Editor/
 ├── backend/          # Express API server
 │   ├── models/       # MongoDB models
 │   ├── routes/       # API endpoints
