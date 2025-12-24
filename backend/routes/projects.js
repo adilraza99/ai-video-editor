@@ -124,6 +124,11 @@ router.put('/:id', protect, async (req, res) => {
         allowedUpdates.forEach(field => {
             if (req.body[field] !== undefined) {
                 project[field] = req.body[field];
+
+                // Explicitly mark Mixed types as modified
+                if (field === 'timeline' || field === 'settings') {
+                    project.markModified(field);
+                }
             }
         });
 

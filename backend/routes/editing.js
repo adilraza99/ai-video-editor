@@ -22,12 +22,22 @@ const upload = multer({
     limits: { fileSize: 50 * 1024 * 1024 } // 50MB
 });
 
+// @route   GET /api/editing/languages
+// @desc    Get supported languages for translation and voiceover
+// @access  Private
+router.get('/languages', protect, (req, res) => {
+    res.json({
+        success: true,
+        data: translationService.getSupportedLanguages()
+    });
+});
+
 // @route   POST /api/editing/voiceover
 // @desc    Generate voiceover for project
 // @access  Private
 router.post('/voiceover', protect, async (req, res) => {
     try {
-        const { projectId, text, tone } = req.body;  // Changed from voice/language to tone
+        const { projectId, text, tone, language } = req.body;
 
         const project = await Project.findById(projectId);
         if (!project || project.user.toString() !== req.user._id.toString()) {
@@ -50,6 +60,7 @@ router.post('/voiceover', protect, async (req, res) => {
         console.log('Full script length:', text.length, 'characters');
         const voiceoverPath = await voiceoverService.generateVoiceover(text, {
             tone: tone || 'male',  // Default to male voice
+            language: language || 'en',
             outputPath: audioOutputPath
         });
 
@@ -92,10 +103,17 @@ router.post('/voiceover', protect, async (req, res) => {
                     console.log('Video processing complete:', processedVideoPath);
 
                     // Update project timeline with processed video
+                    const languageName = translationService.getSupportedLanguages().find(l => l.code === (language || 'en'))?.name || (language || 'en');
+                    const versionDate = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
                     project.timeline.tracks.video.push({
                         url: `/uploads/videos/processed/${processedFilename}`,
                         filename: processedFilename,
-                        type: 'processed-voiceover'
+                        type: 'processed-voiceover',
+                        name: `Voiceover (${languageName} - ${tone}) [${versionDate}]`,
+                        script: text, // Store script with the version
+                        language: language || 'en',
+                        tone: tone || 'male'
                     });
 
                     // Mark the path as modified so Mongoose knows to save the changes
@@ -143,10 +161,9 @@ router.post('/voiceover', protect, async (req, res) => {
 // @access  Private
 router.post('/captions', protect, async (req, res) => {
     try {
-        const { projectId, videoId, language } = req.body;
+        const { projectId, language } = req.body;
 
         const project = await Project.findById(projectId);
-        const video = await Video.findById(videoId);
 
         if (!project || project.user.toString() !== req.user._id.toString()) {
             return res.status(404).json({
@@ -155,30 +172,68 @@ router.post('/captions', protect, async (req, res) => {
             });
         }
 
-        if (!video || video.user.toString() !== req.user._id.toString()) {
-            return res.status(404).json({
+        // Check if project has a video
+        if (!project.timeline?.tracks?.video?.length) {
+            return res.status(400).json({
                 success: false,
-                message: 'Video not found'
+                message: 'No video found in project'
             });
         }
 
-        // Extract audio from video
-        const audioPath = path.join(config.uploadDir, 'temp', `audio-${uuidv4()}.mp3`);
-        await videoProcessingService.extractAudio(video.path, audioPath);
+        // Get the video path from project timeline
+        const videoInfo = project.timeline.tracks.video[0];
+        const videoFilename = path.basename(videoInfo.url);
+        const videoPath = path.join(config.uploadDir, 'videos', videoFilename);
 
-        // Generate captions
-        const captions = await captionService.generateCaptions(video.path, audioPath, { language });
+        if (!fs.existsSync(videoPath)) {
+            return res.status(404).json({
+                success: false,
+                message: 'Video file not found'
+            });
+        }
 
-        // Clean up temp audio
-        if (fs.existsSync(audioPath)) {
-            fs.unlinkSync(audioPath);
+        // Check if script is provided for direct caption generation
+        let captions;
+        const { script } = req.body;
+
+        if (script && script.trim()) {
+            // Generate captions from script
+            console.log('Generating captions from script...');
+            const duration = await videoProcessingService.getVideoDuration(videoPath);
+            captions = await captionService.generateFromScript(script, duration);
+        } else {
+            // Extract audio from video and transcribe
+            console.log('Generating captions from audio transcription...');
+            const audioPath = path.join(config.uploadDir, 'temp', `audio-${uuidv4()}.mp3`);
+
+            // Ensure temp directory exists
+            if (!fs.existsSync(path.dirname(audioPath))) {
+                fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+            }
+
+            await videoProcessingService.extractAudio(videoPath, audioPath);
+
+            // Generate captions
+            captions = await captionService.generateCaptions(videoPath, audioPath, { language });
+
+            // Clean up temp audio
+            if (fs.existsSync(audioPath)) {
+                fs.unlinkSync(audioPath);
+            }
         }
 
         // Update project
         project.captions = {
             enabled: true,
-            language,
-            data: captions
+            language: language || 'en',
+            data: captions,
+            style: project.captions?.style || {
+                fontSize: 20,
+                fontFamily: 'Arial',
+                color: '#FFFFFF',
+                backgroundColor: '#000000',
+                position: 'bottom'
+            }
         };
         await project.save();
 
@@ -193,7 +248,8 @@ router.post('/captions', protect, async (req, res) => {
         console.error('Caption generation error:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to generate captions'
+            message: 'Failed to generate captions',
+            error: error.message
         });
     }
 });
@@ -226,15 +282,29 @@ router.post('/translate', protect, async (req, res) => {
             targetLanguage
         );
 
+        // Translate script if it exists
+        let translatedScript = null;
+        if (project.voiceover && project.voiceover.script) {
+            translatedScript = await translationService.translateText(
+                project.voiceover.script,
+                targetLanguage
+            );
+            project.voiceover.script = translatedScript;
+        }
+
         // Update project
         project.captions.data = translatedCaptions;
         project.captions.language = targetLanguage;
+        if (project.voiceover) {
+            project.voiceover.language = targetLanguage;
+        }
         await project.save();
 
         res.json({
             success: true,
             data: {
                 captions: translatedCaptions,
+                script: translatedScript,
                 project
             }
         });

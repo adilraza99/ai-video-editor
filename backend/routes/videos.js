@@ -6,6 +6,7 @@ import { protect } from '../middleware/auth.js';
 import Video from '../models/Video.js';
 import Project from '../models/Project.js';
 import { config } from '../config/config.js';
+import videoProcessingService from '../services/videoProcessingService.js';
 import fs from 'fs';
 
 const router = express.Router();
@@ -61,6 +62,26 @@ router.post('/upload', protect, upload.single('video'), async (req, res) => {
             });
         }
 
+        // Generate thumbnail from video
+        let thumbnailUrl = null;
+        try {
+            const thumbnailFilename = `${uuidv4()}.jpg`;
+            const thumbnailDir = path.join(config.uploadDir, 'thumbnails');
+
+            // Create thumbnails directory if it doesn't exist
+            if (!fs.existsSync(thumbnailDir)) {
+                fs.mkdirSync(thumbnailDir, { recursive: true });
+            }
+
+            const thumbnailPath = path.join(thumbnailDir, thumbnailFilename);
+            await videoProcessingService.generateThumbnail(req.file.path, thumbnailPath);
+            thumbnailUrl = `/uploads/thumbnails/${thumbnailFilename}`;
+            console.log('Thumbnail generated:', thumbnailUrl);
+        } catch (error) {
+            console.error('Failed to generate thumbnail:', error);
+            // Continue without thumbnail if generation fails
+        }
+
         // Create video record
         const video = await Video.create({
             user: req.user._id,
@@ -70,15 +91,23 @@ router.post('/upload', protect, upload.single('video'), async (req, res) => {
             mimeType: req.file.mimetype,
             size: req.file.size,
             path: req.file.path,
-            url: `/uploads/videos/${req.file.filename}`
+            url: `/uploads/videos/${req.file.filename}`,
+            thumbnail: thumbnailUrl
         });
 
-        // Update project with video info if projectId is provided
+        // Update project with video info and thumbnail if projectId is provided
         if (req.body.projectId) {
-            await Project.findByIdAndUpdate(req.body.projectId, {
+            const updateData = {
                 $push: { 'timeline.tracks.video': { url: video.url, filename: video.filename } },
                 status: 'draft'
-            });
+            };
+
+            // Set project thumbnail if this is the first video or if thumbnail was generated
+            if (thumbnailUrl) {
+                updateData.thumbnail = thumbnailUrl;
+            }
+
+            await Project.findByIdAndUpdate(req.body.projectId, updateData);
         }
 
         res.status(201).json({

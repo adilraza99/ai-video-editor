@@ -25,8 +25,7 @@ class ScriptGenerationService {
             const enhancedPrompt = this.buildPrompt(prompt, tone, length, language, targetWordCount);
 
             // Call Google Gemini API
-            // Note: Don't include 'models/' prefix in the URL path - it's only used in the response from ListModels
-            // Using gemini-2.5-flash (free tier) instead of gemini-2.5-pro (paid tier)
+            // Using gemini-2.5-flash which is the stable version as of 2025
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${config.geminiApiKey}`,
                 {
@@ -63,7 +62,8 @@ class ScriptGenerationService {
             };
         } catch (error) {
             console.error('Script generation error:', error.response?.data || error.message);
-            throw new Error(`Failed to generate script: ${error.response?.data?.error?.message || error.message}`);
+            const apiError = error.response?.data?.error?.message || error.message;
+            throw new Error(`Failed to generate script (Gemini API): ${apiError}`);
         }
     }
 

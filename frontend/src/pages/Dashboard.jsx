@@ -33,17 +33,35 @@ const Dashboard = () => {
 
   const fetchDashboardData = async () => {
     try {
+      // Check if user is authenticated
+      const token = localStorage.getItem('token');
+      if (!token) {
+        // Silently redirect to login
+        navigate('/login');
+        return;
+      }
+
       const response = await api.get('/projects');
-      const projectsData = response.data.data;
-      setProjects(projectsData.slice(0, 6)); // Show latest 6 projects
+      const projectsData = response.data.data || [];
+
+      // Show latest 6 projects
+      setProjects(projectsData.slice(0, 6));
+
+      // Calculate actual stats from the project data
+      const totalVideos = projectsData.reduce((acc, project) => {
+        const videoCount = project?.timeline?.tracks?.video?.length || 0;
+        return acc + videoCount;
+      }, 0);
 
       setStats({
-        totalProjects: projectsData.length,
-        totalVideos: user?.usage?.videosCreated || 0,
+        totalProjects: response.data.count || projectsData.length,
+        totalVideos: totalVideos,
         minutesProcessed: user?.usage?.minutesProcessed || 0
       });
     } catch (error) {
-      toast.error('Failed to load dashboard data');
+      console.error('Dashboard fetch error:', error);
+      // Silently redirect to login for any error during initial load
+      navigate('/login');
     } finally {
       setLoading(false);
     }
@@ -52,6 +70,7 @@ const Dashboard = () => {
   const handleLogout = () => {
     if (window.confirm('Are you sure you want to logout?')) {
       logout();
+      toast.success('Logged out successfully');
       navigate('/login');
     }
   };
@@ -195,7 +214,7 @@ const Dashboard = () => {
       {/* Main Content */}
       <main className="dashboard-main container">
         {/* Welcome Section */}
-        <section className="welcome-section fade-in">
+        <section className="welcome-section staggered-reveal" style={{ '--delay': '0.1s' }}>
           <div className="welcome-content">
             <h1>Welcome back, {user?.name}! 👋</h1>
             <p>Create incredible product videos with AI in minutes</p>
@@ -226,7 +245,7 @@ const Dashboard = () => {
 
         {/* Stats Cards */}
         <section className="stats-grid">
-          <div className="stat-card">
+          <div className="stat-card staggered-reveal" style={{ '--delay': '0.2s' }}>
             <div className="stat-icon" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
               <FolderPlus size={24} />
             </div>
@@ -236,7 +255,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="stat-card">
+          <div className="stat-card staggered-reveal" style={{ '--delay': '0.3s' }}>
             <div className="stat-icon" style={{ background: 'linear-gradient(135deg, #ec4899, #f43f5e)' }}>
               <Video size={24} />
             </div>
@@ -246,7 +265,7 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className="stat-card">
+          <div className="stat-card staggered-reveal" style={{ '--delay': '0.4s' }}>
             <div className="stat-icon" style={{ background: 'linear-gradient(135deg, #10b981, #14b8a6)' }}>
               <Clock size={24} />
             </div>
@@ -258,7 +277,7 @@ const Dashboard = () => {
         </section>
 
         {/* Recent Projects */}
-        <section className="projects-section">
+        <section className="projects-section staggered-reveal" style={{ '--delay': '0.5s' }}>
           <div className="section-header">
             <h2>Recent Projects</h2>
             <Link to="/projects" className="view-all">View All →</Link>
@@ -320,7 +339,24 @@ const Dashboard = () => {
       <style>{`
         .dashboard {
           min-height: 100vh;
-          background: var(--bg-primary);
+          background: #0f1115; /* Dark studio background */
+        }
+
+        .staggered-reveal {
+          opacity: 0;
+          animation: staggeredFadeIn 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+          animation-delay: var(--delay, 0s);
+        }
+
+        @keyframes staggeredFadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
         }
 
         .dashboard-header {

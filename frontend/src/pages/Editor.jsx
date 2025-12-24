@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { toast } from 'react-toastify';
@@ -14,32 +14,106 @@ import {
     Image as ImageIcon,
     Settings,
     Play,
-    Pause
+    Pause,
+    RefreshCw
 } from 'lucide-react';
 
 const Editor = () => {
     const { projectId } = useParams();
     const navigate = useNavigate();
+
+    // ALL HOOKS MUST BE AT THE TOP - React Rules of Hooks
     const [project, setProject] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     const [uploading, setUploading] = useState(false);
     const [activePanel, setActivePanel] = useState('voiceover');
 
+    // Comparison view and music playback hooks
+    const [viewMode, setViewMode] = useState('single'); // single, split
+    const [isPlaying, setIsPlaying] = useState(false);
+    const mainVideoRef = useRef(null);
+    const originalVideoRef = useRef(null);
+    const editedVideoRef = useRef(null);
+    const musicAudioRef = useRef(null);
+    const [activeVersionIndex, setActiveVersionIndex] = useState(-1);
+    const [currentTime, setCurrentTime] = useState(0);
+
+    // Music state
+    const [musicVolume, setMusicVolume] = useState((project?.music?.volume || 0.3) * 100);
+    const [uploadingMusic, setUploadingMusic] = useState(false);
+
+    // Voiceover state
+    const [voiceoverData, setVoiceoverData] = useState({
+        prompt: '',
+        script: '',
+        tone: 'male',  // Changed from voice to tone
+        scriptTone: 'professional',  // Renamed from tone to scriptTone to avoid confusion
+        language: 'en', // Added language support
+        generatingScript: false,
+        generatingVoiceover: false,
+        videoDuration: null  // Track video duration
+    });
+
+    const [targetLanguage, setTargetLanguage] = useState('en');
+    const [sourceLanguage, setSourceLanguage] = useState('en'); // Original audio language
+    const [generatingCaptions, setGeneratingCaptions] = useState(false);
+    const [translating, setTranslating] = useState(false);
+    const [supportedLanguages, setSupportedLanguages] = useState([]);
+
     useEffect(() => {
+        console.log('Editor mounted, projectId:', projectId);
         fetchProject();
     }, [projectId]);
 
+    // Sync music with video
+    useEffect(() => {
+        if (musicAudioRef.current && project?.music?.enabled) {
+            musicAudioRef.current.volume = project.music.volume || 0.3;
+        }
+    }, [project?.music]);
+
     const fetchProject = async () => {
+        setLoading(true);
+        setError(null);
+
         try {
+            console.log('Fetching project:', projectId);
             const response = await api.get(`/projects/${projectId}`);
+            console.log('Project fetched:', response.data);
             setProject(response.data.data);
+
+            // Set initial active version if not set
+            if (activeVersionIndex === -1 && response.data.data.timeline?.tracks?.video?.length > 0) {
+                setActiveVersionIndex(response.data.data.timeline.tracks.video.length - 1);
+            }
         } catch (error) {
-            toast.error('Failed to load project');
-            navigate('/projects');
+            console.error('Failed to fetch project:', error);
+            const errorMessage = error.response?.data?.message || 'Failed to load project';
+            setError(errorMessage);
+            toast.error(errorMessage);
+
+            // Only navigate away if it's a 404 or 403
+            if (error.response?.status === 404 || error.response?.status === 403) {
+                setTimeout(() => navigate('/projects'), 2000);
+            }
         } finally {
             setLoading(false);
         }
     };
+
+    const fetchLanguages = async () => {
+        try {
+            const response = await api.get('/editing/languages');
+            setSupportedLanguages(response.data.data);
+        } catch (error) {
+            console.error('Failed to fetch languages:', error);
+        }
+    };
+
+    useEffect(() => {
+        fetchLanguages();
+    }, []);
 
     const saveProject = async () => {
         try {
@@ -48,7 +122,9 @@ const Editor = () => {
                 timeline: project.timeline,
                 voiceover: project.voiceover,
                 captions: project.captions,
-                music: project.music
+                music: project.music,
+                settings: project.settings,
+                exportSettings: project.exportSettings
             });
             toast.success('Project saved successfully!');
             setProject(response.data.data);
@@ -103,17 +179,6 @@ const Editor = () => {
         }
     };
 
-    // Voiceover state
-    const [voiceoverData, setVoiceoverData] = useState({
-        prompt: '',
-        script: '',
-        tone: 'male',  // Changed from voice to tone
-        scriptTone: 'professional',  // Renamed from tone to scriptTone to avoid confusion
-        generatingScript: false,
-        generatingVoiceover: false,
-        videoDuration: null  // Track video duration
-    });
-
     const handleGenerateScript = async () => {
         if (!voiceoverData.prompt.trim()) {
             toast.error('Please enter a description for your voiceover');
@@ -126,7 +191,7 @@ const Editor = () => {
                 prompt: voiceoverData.prompt,
                 tone: voiceoverData.scriptTone,
                 projectId: projectId,  // Pass projectId to get video duration
-                language: 'en'
+                language: targetLanguage
             });
 
             setVoiceoverData(prev => ({
@@ -153,17 +218,16 @@ const Editor = () => {
             const response = await api.post('/editing/voiceover', {
                 projectId,
                 text: voiceoverData.script,
-                tone: voiceoverData.tone  // Use tone instead of voice/language
+                tone: voiceoverData.tone,  // Use tone instead of voice/language
+                language: targetLanguage
             });
 
-            toast.success('Voiceover generated! Refreshing video...');
+            toast.success('Voiceover generated! Switching to new version...');
+            const updatedProject = response.data.data.project;
+            setProject(updatedProject);
 
-            // Force hard refresh of project
-            setTimeout(async () => {
-                await fetchProject();
-                // Force video reload by updating a dummy state
-                setProject(prev => ({ ...prev, _lastUpdate: Date.now() }));
-            }, 1000);
+            // Switch to the latest version
+            setActiveVersionIndex(updatedProject.timeline.tracks.video.length - 1);
 
             setVoiceoverData(prev => ({ ...prev, generatingVoiceover: false }));
         } catch (error) {
@@ -172,16 +236,364 @@ const Editor = () => {
         }
     };
 
+    const handleGenerateCaptions = async () => {
+        setGeneratingCaptions(true);
+        try {
+            // Check if we should use the script for captions (if available)
+            const shouldUseScript = voiceoverData.script && voiceoverData.script.trim().length > 0;
+
+            const response = await api.post('/editing/captions', {
+                projectId,
+                language: sourceLanguage,
+                // Pass script if we want to align captions with it
+                script: shouldUseScript ? voiceoverData.script : undefined
+            });
+
+            setProject(response.data.data.project);
+            toast.success('Captions generated successfully!');
+            setActivePanel('captions');
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to generate captions');
+        } finally {
+            setGeneratingCaptions(false);
+        }
+    };
+
+    const handleTranslate = async () => {
+        setTranslating(true);
+        try {
+            const response = await api.post('/editing/translate', {
+                projectId,
+                targetLanguage: targetLanguage
+            });
+
+            setProject(response.data.data.project);
+
+            // If script was translated, update voiceoverData
+            if (response.data.data.script) {
+                setVoiceoverData(prev => ({
+                    ...prev,
+                    script: response.data.data.script
+                }));
+
+                toast.info('Script translated! Regenerating localized voiceover...');
+
+                // Trigger voiceover generation for the new language
+                await handleGenerateLocalizedVoiceover(response.data.data.script);
+            } else {
+                toast.success(`Captions localized to ${supportedLanguages.find(l => l.code === targetLanguage)?.name || targetLanguage}!`);
+            }
+        } catch (error) {
+            toast.error(error.response?.data?.message || 'Failed to translate');
+        } finally {
+            setTranslating(false);
+        }
+    };
+
+    const handleGenerateLocalizedVoiceover = async (scriptText) => {
+        setVoiceoverData(prev => ({ ...prev, generatingVoiceover: true }));
+        try {
+            const response = await api.post('/editing/voiceover', {
+                projectId,
+                text: scriptText,
+                tone: voiceoverData.tone,
+                language: targetLanguage
+            });
+
+            toast.success('Localized Audio Generated! Switching to new version...');
+            const updatedProject = response.data.data.project;
+            setProject(updatedProject);
+
+            // Switch to the latest version
+            setActiveVersionIndex(updatedProject.timeline.tracks.video.length - 1);
+        } catch (error) {
+            toast.error('Localized audio generation failed');
+        } finally {
+            setVoiceoverData(prev => ({ ...prev, generatingVoiceover: false }));
+        }
+    };
+
+    const toggleCaptions = async () => {
+        const currentCaptions = project.captions || { enabled: false, data: [], language: 'en' };
+        const newState = !currentCaptions.enabled;
+
+        // Optimistically update UI
+        setProject(prev => ({
+            ...prev,
+            captions: {
+                ...currentCaptions,
+                enabled: newState
+            }
+        }));
+
+        try {
+            const response = await api.put(`/projects/${projectId}`, {
+                captions: {
+                    ...currentCaptions,
+                    enabled: newState
+                }
+            });
+            // Update with server response
+            setProject(response.data.data);
+            toast.success(newState ? 'Captions Visible ✓' : 'Captions Hidden');
+        } catch (error) {
+            // Revert on error
+            setProject(prev => ({
+                ...prev,
+                captions: {
+                    ...currentCaptions,
+                    enabled: !newState
+                }
+            }));
+            toast.error('Failed to toggle captions');
+        }
+    };
+
+    const handleDeleteVersion = async (versionIndex) => {
+        if (versionIndex === 0) {
+            toast.error('Cannot delete the original video');
+            return;
+        }
+
+        const version = project.timeline.tracks.video[versionIndex];
+        const confirmMessage = `Delete "${version.name || 'Version ' + versionIndex}"? This cannot be undone.`;
+
+        if (!window.confirm(confirmMessage)) {
+            return;
+        }
+
+        try {
+            // Remove the version from the array
+            const updatedVideos = project.timeline.tracks.video.filter((_, idx) => idx !== versionIndex);
+
+            const response = await api.put(`/projects/${projectId}`, {
+                timeline: {
+                    ...project.timeline,
+                    tracks: {
+                        ...project.timeline.tracks,
+                        video: updatedVideos
+                    }
+                }
+            });
+
+            setProject(response.data.data);
+
+            // If we deleted the active version, switch to the original
+            if (activeVersionIndex === versionIndex) {
+                setActiveVersionIndex(0);
+            } else if (activeVersionIndex > versionIndex) {
+                // Adjust index if a version before the active one was deleted
+                setActiveVersionIndex(activeVersionIndex - 1);
+            }
+
+            toast.success('Version deleted successfully');
+        } catch (error) {
+            console.error('Delete version error:', error);
+            toast.error('Failed to delete version');
+        }
+    };
+
+    // Music handlers
+    const handleMusicUpload = async (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        // Validate file type
+        if (!file.type.startsWith('audio/')) {
+            toast.error('Please select an audio file');
+            return;
+        }
+
+        // Check file size (max 50MB)
+        if (file.size > 50 * 1024 * 1024) {
+            toast.error('File size must be less than 50MB');
+            return;
+        }
+
+        setUploadingMusic(true);
+        try {
+            const formData = new FormData();
+            formData.append('music', file);
+            formData.append('projectId', projectId);
+            formData.append('volume', musicVolume / 100);
+
+            const response = await api.post('/editing/music', formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+
+            toast.success('Background music added successfully!');
+            setProject(response.data.data.project);
+            setMusicVolume((response.data.data.project.music.volume || 0.3) * 100);
+        } catch (error) {
+            console.error('Music upload error:', error);
+            toast.error(error.response?.data?.message || 'Failed to upload music');
+        } finally {
+            setUploadingMusic(false);
+        }
+    };
+
+    const handleMusicVolumeChange = async (value) => {
+        setMusicVolume(value);
+
+        if (!project?.music?.enabled) return;
+
+        // Debounce save to avoid too many API calls
+        clearTimeout(window.musicVolumeTimeout);
+        window.musicVolumeTimeout = setTimeout(async () => {
+            try {
+                await api.put(`/projects/${projectId}`, {
+                    music: {
+                        ...project.music,
+                        volume: value / 100
+                    }
+                });
+            } catch (error) {
+                console.error('Failed to update volume:', error);
+            }
+        }, 500);
+    };
+
+    const handleRemoveMusic = async () => {
+        if (!project?.music?.enabled && !project?.music?.track) {
+            toast.error('No music to remove');
+            return;
+        }
+
+        try {
+            await api.put(`/projects/${projectId}`, {
+                music: {
+                    enabled: false,
+                    track: null,
+                    volume: 0.3
+                }
+            });
+
+            setProject(prev => ({
+                ...prev,
+                music: { enabled: false, track: null, volume: 0.3 }
+            }));
+
+            setMusicVolume(30);
+            toast.success('Music removed');
+        } catch (error) {
+            console.error('Failed to remove music:', error);
+            toast.error('Failed to remove music');
+        }
+    };
+
+    const handleToggleMusic = async (enabled) => {
+        if (!project?.music?.track) {
+            toast.error('Please upload music first');
+            return;
+        }
+
+        try {
+            await api.put(`/projects/${projectId}`, {
+                music: {
+                    ...project.music,
+                    enabled
+                }
+            });
+
+            setProject(prev => ({
+                ...prev,
+                music: { ...prev.music, enabled }
+            }));
+
+            toast.success(`Music ${enabled ? 'enabled' : 'disabled'}`);
+        } catch (error) {
+            console.error('Failed to toggle music:', error);
+            toast.error('Failed to toggle music');
+        }
+    };
+
+
     if (loading) {
         return (
             <div className="loading-container">
                 <div className="spinner" style={{ width: '40px', height: '40px' }}></div>
+                <p style={{ marginTop: '20px', color: 'var(--text-secondary)' }}>Loading project...</p>
             </div>
         );
     }
 
+    // Error State
+    if (error) {
+        return (
+            <div className="loading-container">
+                <div style={{ textAlign: 'center', maxWidth: '500px' }}>
+                    <div style={{ fontSize: '4rem', marginBottom: '20px' }}>⚠️</div>
+                    <h2 style={{ color: 'var(--error)', marginBottom: '10px' }}>Error Loading Project</h2>
+                    <p style={{ color: 'var(--text-secondary)', marginBottom: '30px' }}>{error}</p>
+                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                        <button onClick={fetchProject} className="btn btn-primary">
+                            Try Again
+                        </button>
+                        <button onClick={() => navigate('/projects')} className="btn btn-secondary">
+                            Back to Projects
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // No project data
+    if (!project) {
+        return (
+            <div className="loading-container">
+                <p style={{ color: 'var(--text-secondary)' }}>No project found</p>
+                <button onClick={() => navigate('/projects')} className="btn btn-primary" style={{ marginTop: '20px' }}>
+                    Back to Projects
+                </button>
+            </div>
+        );
+    }
+
+    // Synchronized playback control
+    const handlePlayPause = () => {
+        if (viewMode === 'single') {
+            if (mainVideoRef.current) {
+                if (isPlaying) {
+                    mainVideoRef.current.pause();
+                    if (musicAudioRef.current) musicAudioRef.current.pause();
+                } else {
+                    mainVideoRef.current.play();
+                    if (project?.music?.enabled && musicAudioRef.current) {
+                        musicAudioRef.current.play();
+                    }
+                }
+            }
+        } else {
+            // Split view - sync both videos
+            if (isPlaying) {
+                originalVideoRef.current?.pause();
+                editedVideoRef.current?.pause();
+                if (musicAudioRef.current) musicAudioRef.current.pause();
+            } else {
+                originalVideoRef.current?.play();
+                editedVideoRef.current?.play();
+                if (project?.music?.enabled && musicAudioRef.current) {
+                    musicAudioRef.current.play();
+                }
+            }
+        }
+        setIsPlaying(!isPlaying);
+    };
+
     return (
         <div className="editor">
+            {/* Hidden Music Player */}
+            {project?.music?.enabled && project?.music?.track && (
+                <audio
+                    ref={musicAudioRef}
+                    src={project.music.track}
+                    loop
+                    style={{ display: 'none' }}
+                />
+            )}
             {/* Top Bar */}
             <div className="editor-topbar">
                 <div className="topbar-left">
@@ -194,6 +606,8 @@ const Editor = () => {
                             type="text"
                             value={project?.name || ''}
                             onChange={(e) => setProject({ ...project, name: e.target.value })}
+                            onBlur={saveProject}
+                            placeholder="Project Name"
                             className="name-input"
                         />
                     </div>
@@ -214,7 +628,7 @@ const Editor = () => {
             {/* Main Editor Layout */}
             <div className="editor-main">
                 {/* Left Sidebar - Tools */}
-                <div className="editor-sidebar">
+                <div className="editor-left">
                     <button
                         className={`tool-btn ${activePanel === 'voiceover' ? 'active' : ''}`}
                         onClick={() => setActivePanel('voiceover')}
@@ -248,7 +662,7 @@ const Editor = () => {
                         title="Language"
                     >
                         <Globe size={24} />
-                        <span>Language</span>
+                        <span>Localization</span>
                     </button>
 
                     <button
@@ -279,68 +693,213 @@ const Editor = () => {
                     </button>
                 </div>
 
-                {/* Video Preview */}
-                <div className="video-preview-container">
-                    <div className="video-preview">
-                        {project?.timeline?.tracks?.video?.length > 0 ? (
-                            <div className="main-video-container">
-                                <video
-                                    src={project.timeline.tracks.video[project.timeline.tracks.video.length - 1].url}
-                                    className="main-video"
-                                    controls
-                                    key={project.timeline.tracks.video[project.timeline.tracks.video.length - 1].url}
-                                />
-                                <div style={{
-                                    position: 'absolute',
-                                    bottom: '20px',
-                                    left: '20px',
-                                    background: 'rgba(0,0,0,0.7)',
-                                    padding: '8px 12px',
-                                    borderRadius: '6px',
-                                    color: 'white',
-                                    fontSize: '0.875rem'
-                                }}>
-                                    {project.timeline.tracks.video[project.timeline.tracks.video.length - 1].type === 'processed-voiceover'
-                                        ? '🎙️ With Voiceover'
-                                        : '📹 Original Video'}
-                                </div>
+                {/* Center Column - Video + Timeline */}
+                <div className="editor-center">
+                    {/* Video Preview with Comparison View */}
+                    <div className="video-preview-container">
+                        {/* View Mode Selector */}
+                        {project?.timeline?.tracks?.video?.length > 1 && (
+                            <div className="view-mode-selector">
                                 <button
-                                    onClick={() => {
-                                        fetchProject();
-                                        toast.info('Video refreshed!');
-                                    }}
-                                    className="btn btn-secondary btn-sm"
-                                    style={{
-                                        position: 'absolute',
-                                        top: '20px',
-                                        right: '20px',
-                                        zIndex: 10
-                                    }}
+                                    className={`view-mode-btn ${viewMode === 'single' ? 'active' : ''}`}
+                                    onClick={() => setViewMode('single')}
                                 >
-                                    🔄 Refresh
+                                    <span>🎥</span> Single View
                                 </button>
-                            </div>
-                        ) : (
-                            <div className="preview-placeholder">
-                                <Video size={64} style={{ opacity: 0.3 }} />
-                                <p>Upload a video to get started</p>
                                 <button
-                                    onClick={() => document.getElementById('video-upload-editor').click()}
-                                    className="btn btn-primary"
-                                    disabled={uploading}
+                                    className={`view-mode-btn ${viewMode === 'split' ? 'active' : ''}`}
+                                    onClick={() => setViewMode('split')}
                                 >
-                                    <Video size={18} />
-                                    {uploading ? 'Uploading...' : 'Upload Video'}
+                                    <span>⚡</span> Compare
                                 </button>
-                                <input
-                                    id="video-upload-editor"
-                                    type="file"
-                                    accept="video/*"
-                                    onChange={handleVideoUpload}
-                                    style={{ display: 'none' }}
-                                />
                             </div>
                         )}
+
+                        <div className="video-preview">
+                            {project?.timeline?.tracks?.video?.length > 0 ? (
+                                <>
+                                    {viewMode === 'single' ? (
+                                        /* Single Video View */
+                                        <div className="main-video-container single-view">
+                                            <video
+                                                ref={mainVideoRef}
+                                                src={project.timeline.tracks.video[activeVersionIndex !== -1 ? activeVersionIndex : project.timeline.tracks.video.length - 1].url}
+                                                className="main-video"
+                                                controls
+                                                onPlay={() => {
+                                                    setIsPlaying(true);
+                                                    if (project?.music?.enabled && musicAudioRef.current) {
+                                                        musicAudioRef.current.currentTime = mainVideoRef.current.currentTime;
+                                                        musicAudioRef.current.play();
+                                                    }
+                                                }}
+                                                onPause={() => {
+                                                    setIsPlaying(false);
+                                                    if (musicAudioRef.current) musicAudioRef.current.pause();
+                                                }}
+                                                onTimeUpdate={(e) => {
+                                                    setCurrentTime(e.target.currentTime);
+                                                }}
+                                                onSeeking={(e) => {
+                                                    if (musicAudioRef.current) {
+                                                        musicAudioRef.current.currentTime = e.target.currentTime;
+                                                    }
+                                                }}
+                                                key={project.timeline.tracks.video[project.timeline.tracks.video.length - 1].url}
+                                            />
+                                            {/* Caption Overlay */}
+                                            {project?.captions?.enabled && project?.captions?.data?.length > 0 && (
+                                                <div className={`caption-overlay ${project.captions.style?.position || 'bottom'}`}
+                                                    style={{
+                                                        fontSize: `${project.captions.style?.fontSize || 24}px`,
+                                                        fontFamily: project.captions.style?.fontFamily || 'Arial',
+                                                        color: project.captions.style?.color || '#FFFFFF',
+                                                        backgroundColor: project.captions.style?.backgroundColor || 'rgba(0,0,0,0.7)',
+                                                        padding: '8px 16px',
+                                                        borderRadius: '4px',
+                                                        textAlign: 'center',
+                                                        position: 'absolute',
+                                                        left: '50%',
+                                                        transform: 'translateX(-50%)',
+                                                        bottom: project.captions.style?.position === 'bottom' ? '15%' : 'auto',
+                                                        top: project.captions.style?.position === 'top' ? '15%' : 'auto',
+                                                        maxWidth: '80%',
+                                                        zIndex: 10,
+                                                        pointerEvents: 'none'
+                                                    }}>
+                                                    {project.captions.data.find(c => currentTime >= c.startTime && currentTime <= c.endTime)?.text}
+                                                </div>
+                                            )}
+
+                                            {/* Video Label Badge */}
+                                            <div className="video-label-badge">
+                                                {(() => {
+                                                    const currentVid = project.timeline.tracks.video[activeVersionIndex !== -1 ? activeVersionIndex : project.timeline.tracks.video.length - 1];
+                                                    if (activeVersionIndex === 0) return '📹 Original';
+                                                    return currentVid.name || '🎙️ With Voiceover';
+                                                })()}
+                                            </div>
+
+                                            {/* Music Indicator */}
+                                            {project?.music?.enabled && (
+                                                <div className="music-indicator">
+                                                    🎵 Background Music: {Math.round((project.music.volume || 0.3) * 100)}%
+                                                </div>
+                                            )}
+
+                                            {/* Refresh Button */}
+                                            <button
+                                                onClick={() => {
+                                                    fetchProject();
+                                                    toast.info('Video refreshed!');
+                                                }}
+                                                className="btn btn-secondary btn-sm refresh-btn"
+                                                title="Refresh Video"
+                                            >
+                                                <RefreshCw size={16} className="refresh-icon" />
+                                                <span>Refresh</span>
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        /* Split Comparison View */
+                                        <div className="comparison-view">
+                                            {/* Original Video */}
+                                            <div className="video-half original">
+                                                <div className="video-label">📹 Original</div>
+                                                <video
+                                                    ref={originalVideoRef}
+                                                    src={project.timeline.tracks.video[0].url}
+                                                    className="comparison-video"
+                                                    controls
+                                                    onPlay={() => {
+                                                        setIsPlaying(true);
+                                                        // Independent playback - no auto-sync
+                                                    }}
+                                                    onPause={() => {
+                                                        setIsPlaying(false);
+                                                        // Independent playback - no auto-sync
+                                                    }}
+                                                    onSeeking={(e) => {
+                                                        // Independent seeking - no auto-sync
+                                                    }}
+                                                />
+                                            </div>
+
+                                            {/* Divider */}
+                                            <div className="comparison-divider">
+                                                <div className="divider-line"></div>
+                                            </div>
+
+                                            {/* Processed/Edited Video */}
+                                            <div className="video-half edited">
+                                                <div className="video-label">✨ Edited</div>
+                                                <div style={{ position: 'relative', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                    <video
+                                                        ref={editedVideoRef}
+                                                        src={project.timeline.tracks.video[activeVersionIndex !== -1 ? activeVersionIndex : project.timeline.tracks.video.length - 1].url}
+                                                        className="comparison-video"
+                                                        controls
+                                                        onPlay={() => setIsPlaying(true)}
+                                                        onPause={() => setIsPlaying(false)}
+                                                        onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
+                                                        key={project.timeline.tracks.video[project.timeline.tracks.video.length - 1].url}
+                                                    />
+                                                    {/* Caption Overlay in Split View */}
+                                                    {project?.captions?.enabled && project?.captions?.data?.length > 0 && (
+                                                        <div className="caption-overlay"
+                                                            style={{
+                                                                fontSize: '18px',
+                                                                color: '#FFFFFF',
+                                                                backgroundColor: 'rgba(0,0,0,0.7)',
+                                                                padding: '4px 8px',
+                                                                borderRadius: '4px',
+                                                                textAlign: 'center',
+                                                                position: 'absolute',
+                                                                left: '50%',
+                                                                transform: 'translateX(-50%)',
+                                                                bottom: '10%',
+                                                                width: '90%',
+                                                                zIndex: 10,
+                                                                pointerEvents: 'none'
+                                                            }}>
+                                                            {project.captions.data.find(c => currentTime >= c.startTime && currentTime <= c.endTime)?.text}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Music Indicator for Comparison */}
+                                            {project?.music?.enabled && (
+                                                <div className="music-indicator-comparison">
+                                                    🎵 Music: {Math.round((project.music.volume || 0.3) * 100)}%
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </>
+                            ) : (
+                                /* Empty State */
+                                <div className="preview-placeholder">
+                                    <Video size={64} style={{ opacity: 0.3 }} />
+                                    <p>Upload a video to get started</p>
+                                    <button
+                                        onClick={() => document.getElementById('video-upload-editor').click()}
+                                        className="btn btn-primary"
+                                        disabled={uploading}
+                                    >
+                                        <Video size={18} />
+                                        {uploading ? 'Uploading...' : 'Upload Video'}
+                                    </button>
+                                    <input
+                                        id="video-upload-editor"
+                                        type="file"
+                                        accept="video/*"
+                                        onChange={handleVideoUpload}
+                                        style={{ display: 'none' }}
+                                    />
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Timeline - Video Versions */}
@@ -355,19 +914,30 @@ const Editor = () => {
                         </div>
                         <div className="video-versions">
                             {project?.timeline?.tracks?.video?.map((vid, idx) => (
-                                <div key={idx} className="version-chip">
-                                    {vid.type === 'processed-voiceover' ? '🎙️ With Voiceover' : '📹 Original'}
-                                    {idx === project.timeline.tracks.video.length - 1 && (
-                                        <span className="current-badge">Current</span>
+                                <button
+                                    key={idx}
+                                    className={`version-chip ${(activeVersionIndex === idx || (activeVersionIndex === -1 && idx === project.timeline.tracks.video.length - 1)) ? 'active' : ''}`}
+                                    onClick={() => {
+                                        setActiveVersionIndex(idx);
+                                        if (vid.script) {
+                                            setVoiceoverData(prev => ({ ...prev, script: vid.script }));
+                                        }
+                                        toast.success('Switched to ' + (vid.name || (vid.type === 'processed-voiceover' ? 'voiceover version' : 'original')));
+                                    }}
+                                    title="Click to switch to this version"
+                                >
+                                    {vid.type === 'processed-voiceover' ? '🎙️ ' + (vid.name || 'Voiceover') : '📹 Original'}
+                                    {(activeVersionIndex === idx || (activeVersionIndex === -1 && idx === project.timeline.tracks.video.length - 1)) && (
+                                        <span className="current-badge">Active</span>
                                     )}
-                                </div>
+                                </button>
                             )) || <div className="version-chip">No videos yet</div>}
                         </div>
                     </div>
                 </div>
 
                 {/* Right Panel - Properties */}
-                <div className="properties-panel">
+                <div className="editor-right properties-panel">
                     <h3>{activePanel.charAt(0).toUpperCase() + activePanel.slice(1)}</h3>
 
                     <div className="panel-content">
@@ -444,6 +1014,18 @@ const Editor = () => {
                                     </select>
                                 </div>
 
+                                <div className="form-group" style={{ padding: 'var(--spacing-sm)', background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Target Language</span>
+                                        <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--primary)' }}>
+                                            {supportedLanguages.find(l => l.code === targetLanguage)?.name || targetLanguage}
+                                        </span>
+                                    </div>
+                                    <small style={{ display: 'block', marginTop: '4px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                        Change this in the <b>Localization</b> panel.
+                                    </small>
+                                </div>
+
                                 {/* Script Editor */}
                                 <div className="form-group">
                                     <label>Script</label>
@@ -472,9 +1054,62 @@ const Editor = () => {
                                 <p className="panel-description">
                                     Auto-generate and customize captions
                                 </p>
-                                <button className="btn btn-primary" style={{ width: '100%', marginBottom: 'var(--spacing-md)' }}>
-                                    Auto-Generate Captions
+
+                                <div className="form-group">
+                                    <label>Video's Original Language</label>
+                                    <select
+                                        className="select"
+                                        value={sourceLanguage}
+                                        onChange={(e) => setSourceLanguage(e.target.value)}
+                                    >
+                                        {supportedLanguages.length > 0 ? (
+                                            supportedLanguages.map(lang => (
+                                                <option key={lang.code} value={lang.code}>
+                                                    {lang.name}
+                                                </option>
+                                            ))
+                                        ) : (
+                                            <>
+                                                <option value="en">English</option>
+                                                <option value="hi">Hindi</option>
+                                            </>
+                                        )}
+                                    </select>
+                                    <small className="help-text">Used to transcribe audio from the original video.</small>
+                                </div>
+
+                                <button
+                                    className="btn btn-secondary"
+                                    style={{ width: '100%', marginBottom: 'var(--spacing-lg)' }}
+                                    onClick={handleGenerateCaptions}
+                                    disabled={generatingCaptions}
+                                >
+                                    {generatingCaptions ? 'Transcription in Progress...' : '🎙️ Transcribe original video'}
                                 </button>
+
+                                <div className="form-group" style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    background: project?.captions?.enabled ? 'rgba(99, 102, 241, 0.1)' : 'var(--bg-tertiary)',
+                                    padding: 'var(--spacing-md)',
+                                    borderRadius: 'var(--radius-md)',
+                                    marginBottom: 'var(--spacing-md)',
+                                    border: project?.captions?.enabled ? '1px solid var(--primary)' : '1px solid transparent',
+                                    transition: 'all 0.3s ease'
+                                }}>
+                                    <div>
+                                        <label style={{ margin: 0, display: 'block', fontWeight: '600' }}>Captions Visibility</label>
+                                        <small style={{ color: 'var(--text-muted)' }}>{project?.captions?.enabled ? 'Currently showing' : 'Currently hidden'}</small>
+                                    </div>
+                                    <button
+                                        className={`btn ${project?.captions?.enabled ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+                                        onClick={toggleCaptions}
+                                        style={{ minWidth: '80px', boxShadow: project?.captions?.enabled ? '0 0 15px rgba(99, 102, 241, 0.3)' : 'none' }}
+                                    >
+                                        {project?.captions?.enabled ? 'ENABLED' : 'DISABLED'}
+                                    </button>
+                                </div>
                                 <div className="form-group">
                                     <label>Font Size</label>
                                     <input type="range" min="12" max="48" defaultValue="24" className="input" />
@@ -493,37 +1128,157 @@ const Editor = () => {
                         {activePanel === 'music' && (
                             <div className="panel-section">
                                 <p className="panel-description">
-                                    Add background music to your video
+                                    Add background music to enhance your video
                                 </p>
-                                <input type="file" accept="audio/*" className="input" style={{ marginBottom: 'var(--spacing-md)' }} />
-                                <div className="form-group">
-                                    <label>Volume</label>
-                                    <input type="range" min="0" max="100" defaultValue="30" className="input" />
-                                </div>
-                                <button className="btn btn-primary" style={{ width: '100%' }}>
-                                    Add Music
-                                </button>
+
+                                {/* Music Upload */}
+                                {!project?.music?.track && (
+                                    <div className="form-group">
+                                        <label>Upload Music File</label>
+                                        <input
+                                            type="file"
+                                            accept="audio/*"
+                                            className="input"
+                                            onChange={handleMusicUpload}
+                                            disabled={uploadingMusic}
+                                            style={{ marginBottom: 'var(--spacing-md)' }}
+                                        />
+                                        {uploadingMusic && <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Uploading...</p>}
+                                    </div>
+                                )}
+
+                                {/* Music Info & Controls */}
+                                {project?.music?.track && (
+                                    <>
+                                        {/* Music Info */}
+                                        <div className="form-group">
+                                            <label>🎵 Current Music</label>
+                                            <div style={{
+                                                padding: 'var(--spacing-md)',
+                                                background: 'var(--bg-tertiary)',
+                                                borderRadius: 'var(--radius-md)',
+                                                marginBottom: 'var(--spacing-md)'
+                                            }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--spacing-xs)' }}>
+                                                    <span style={{ color: 'var(--text-secondary)' }}>Status</span>
+                                                    <span style={{ fontWeight: '600', color: project.music.enabled ? 'var(--success)' : 'var(--text-muted)' }}>
+                                                        {project.music.enabled ? '✓ Enabled' : '○ Disabled'}
+                                                    </span>
+                                                </div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                    <span style={{ color: 'var(--text-secondary)' }}>File</span>
+                                                    <span style={{ fontWeight: '600', fontSize: '0.875rem' }}>
+                                                        {project.music.track.split('/').pop().substring(0, 20)}...
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Music Preview */}
+                                        <div className="form-group">
+                                            <label>Preview</label>
+                                            <audio
+                                                controls
+                                                style={{ width: '100%', marginBottom: 'var(--spacing-md)' }}
+                                                src={project.music.track}
+                                            />
+                                        </div>
+
+                                        {/* Enable/Disable Toggle */}
+                                        <div className="form-group">
+                                            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                <span>Enable Background Music</span>
+                                                <label className="toggle-switch">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={project.music.enabled}
+                                                        onChange={(e) => handleToggleMusic(e.target.checked)}
+                                                    />
+                                                    <span className="toggle-slider"></span>
+                                                </label>
+                                            </label>
+                                        </div>
+
+                                        {/* Volume Control */}
+                                        <div className="form-group">
+                                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span>Volume</span>
+                                                <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                                                    {Math.round(musicVolume)}%
+                                                </span>
+                                            </label>
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="100"
+                                                value={musicVolume}
+                                                onChange={(e) => handleMusicVolumeChange(parseInt(e.target.value))}
+                                                className="input"
+                                            />
+                                        </div>
+
+                                        {/* Remove Music Button */}
+                                        <button
+                                            className="btn btn-danger"
+                                            style={{ width: '100%', marginTop: 'var(--spacing-md)' }}
+                                            onClick={handleRemoveMusic}
+                                        >
+                                            🗑️ Remove Music
+                                        </button>
+                                    </>
+                                )}
+
+                                {/* Info Message */}
+                                {!project?.music?.track && !uploadingMusic && (
+                                    <div style={{
+                                        marginTop: 'var(--spacing-sm)',
+                                        padding: 'var(--spacing-sm)',
+                                        background: 'var(--bg-tertiary)',
+                                        borderRadius: 'var(--radius-sm)',
+                                        fontSize: '0.875rem',
+                                        color: 'var(--text-secondary)',
+                                        textAlign: 'center'
+                                    }}>
+                                        ℹ️ Supported formats: MP3, WAV, AAC, M4A (Max 50MB)
+                                    </div>
+                                )}
                             </div>
                         )}
 
                         {activePanel === 'language' && (
-                            <div className="panel-section">
+                            <div className="side-panel">
+                                <h2 className="panel-title">Localization</h2>
                                 <p className="panel-description">
-                                    Translate captions and voiceover
+                                    Translate and localize your entire project
                                 </p>
                                 <div className="form-group">
-                                    <label>Target Language</label>
-                                    <select className="select">
-                                        <option>Spanish</option>
-                                        <option>French</option>
-                                        <option>German</option>
-                                        <option>Japanese</option>
-                                        <option>Chinese</option>
+                                    <label>Global Target Language</label>
+                                    <select
+                                        className="select"
+                                        value={targetLanguage}
+                                        onChange={(e) => setTargetLanguage(e.target.value)}
+                                    >
+                                        {supportedLanguages.map(lang => (
+                                            <option key={lang.code} value={lang.code}>
+                                                {lang.name}
+                                            </option>
+                                        ))}
                                     </select>
                                 </div>
-                                <button className="btn btn-primary" style={{ width: '100%' }}>
-                                    Translate
+                                <button
+                                    className="btn btn-primary"
+                                    style={{ width: '100%' }}
+                                    onClick={handleTranslate}
+                                    disabled={translating}
+                                >
+                                    {translating ? 'Localizing Everything...' : 'Localize Project (Audio + Text)'}
                                 </button>
+                                <div style={{ marginTop: 'var(--spacing-lg)' }}>
+                                    <small className="help-text">
+                                        This will translate all existing captions to the target language.
+                                        You can then regenerate the voiceover in the Voiceover panel to match.
+                                    </small>
+                                </div>
                             </div>
                         )}
 
@@ -532,19 +1287,19 @@ const Editor = () => {
                                 <p className="panel-description">
                                     Change video background
                                 </p>
-                                <div className="form-group">
-                                    <label>Background Type</label>
-                                    <select className="select">
-                                        <option>Color</option>
-                                        <option>Blur</option>
-                                        <option>Image</option>
-                                    </select>
-                                </div>
-                                <div className="background-templates">
-                                    <div className="template-item" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}></div>
-                                    <div className="template-item" style={{ background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)' }}></div>
-                                    <div className="template-item" style={{ background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)' }}></div>
-                                    <div className="template-item" style={{ background: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)' }}></div>
+                                <div style={{
+                                    padding: 'var(--spacing-2xl)',
+                                    textAlign: 'center',
+                                    background: 'var(--bg-tertiary)',
+                                    borderRadius: 'var(--radius-lg)',
+                                    border: '2px dashed var(--border)'
+                                }}>
+                                    <div style={{ fontSize: '3rem', marginBottom: 'var(--spacing-md)' }}>🎨</div>
+                                    <h3 style={{ marginBottom: 'var(--spacing-sm)', color: 'var(--text-primary)' }}>Coming Soon</h3>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                                        Background customization features are under development.
+                                        Stay tuned for color overlays, blur effects, and custom backgrounds!
+                                    </p>
                                 </div>
                             </div>
                         )}
@@ -556,39 +1311,142 @@ const Editor = () => {
                                 </p>
                                 <div className="form-group">
                                     <label>Resolution</label>
-                                    <select className="select">
-                                        <option>1920x1080 (Full HD)</option>
-                                        <option>1280x720 (HD)</option>
-                                        <option>3840x2160 (4K)</option>
+                                    <select className="select"
+                                        value={`${project?.settings?.resolution?.width}x${project?.settings?.resolution?.height}`}
+                                        onChange={(e) => {
+                                            const [width, height] = e.target.value.split('x').map(Number);
+                                            setProject(prev => ({
+                                                ...prev,
+                                                settings: { ...prev.settings, resolution: { width, height } }
+                                            }));
+                                            toast.info(`Resolution set to ${e.target.value}`);
+                                        }}
+                                    >
+                                        <option value="1920x1080">1920x1080 (Full HD)</option>
+                                        <option value="1280x720">1280x720 (HD)</option>
+                                        <option value="3840x2160">3840x2160 (4K)</option>
                                     </select>
                                 </div>
                                 <div className="form-group">
                                     <label>Frame Rate</label>
-                                    <select className="select">
-                                        <option>30 FPS</option>
-                                        <option>60 FPS</option>
+                                    <select className="select"
+                                        value={project?.settings?.frameRate || 30}
+                                        onChange={(e) => {
+                                            setProject(prev => ({
+                                                ...prev,
+                                                settings: { ...prev.settings, frameRate: Number(e.target.value) }
+                                            }));
+                                            toast.info(`Frame rate set to ${e.target.value} FPS`);
+                                        }}
+                                    >
+                                        <option value="30">30 FPS</option>
+                                        <option value="60">60 FPS</option>
+                                        <option value="24">24 FPS</option>
                                     </select>
                                 </div>
                                 <div className="form-group">
                                     <label>Quality</label>
-                                    <select className="select">
-                                        <option>High</option>
-                                        <option>Ultra</option>
-                                        <option>Medium</option>
+                                    <select className="select"
+                                        value={project?.exportSettings?.quality || 'high'}
+                                        onChange={(e) => {
+                                            setProject(prev => ({
+                                                ...prev,
+                                                exportSettings: { ...prev.exportSettings, quality: e.target.value }
+                                            }));
+                                            toast.info(`Quality set to ${e.target.value}`);
+                                        }}
+                                    >
+                                        <option value="high">High</option>
+                                        <option value="ultra">Ultra</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="low">Low</option>
                                     </select>
                                 </div>
+                                <button
+                                    className="btn btn-secondary"
+                                    style={{ width: '100%', marginTop: 'var(--spacing-md)' }}
+                                    onClick={saveProject}
+                                >
+                                    💾 Save Settings
+                                </button>
                             </div>
                         )}
 
                         {activePanel === 'files' && (
                             <div className="panel-section">
                                 <p className="panel-description">
-                                    Generated voiceover files and processed videos
+                                    Project versions and generated files
                                 </p>
 
-                                {/* Audio Files */}
+                                {/* Video Versions */}
                                 <div className="form-group">
-                                    <label>🎵 Audio Files</label>
+                                    <label>🗂️ Video Versions</label>
+                                    <div className="files-list">
+                                        {/* Original Video */}
+                                        <div
+                                            className={`file-item ${activeVersionIndex === 0 ? 'active' : ''}`}
+                                            onClick={() => {
+                                                setActiveVersionIndex(0);
+                                                toast.info('Switched to Original Video');
+                                            }}
+                                            style={{ cursor: 'pointer', border: activeVersionIndex === 0 ? '1px solid var(--primary)' : '1px solid transparent' }}
+                                        >
+                                            <div className="file-info">
+                                                <span className="file-name" style={{ fontWeight: 'bold' }}>📹 Original Upload</span>
+                                                <span className="file-type">.mp4</span>
+                                            </div>
+                                        </div>
+
+                                        {/* Processed Versions */}
+                                        {project?.timeline?.tracks?.video?.map((vid, realIdx) => {
+                                            if (realIdx === 0) return null; // Skip original as it's handled above
+                                            return (
+                                                <div
+                                                    key={realIdx}
+                                                    className={`file-item ${activeVersionIndex === realIdx ? 'active' : ''}`}
+                                                    onClick={() => {
+                                                        setActiveVersionIndex(realIdx);
+                                                        if (vid.script) {
+                                                            setVoiceoverData(prev => ({ ...prev, script: vid.script }));
+                                                        }
+                                                        toast.info(`Switched to: ${vid.name || `Version ${realIdx}`}`);
+                                                    }}
+                                                    style={{ cursor: 'pointer', border: activeVersionIndex === realIdx ? '1px solid var(--primary)' : '1px solid transparent', transition: 'all 0.2s ease' }}
+                                                >
+                                                    <div className="file-info">
+                                                        <span className="file-name" style={{ fontWeight: 'bold' }}>{vid.name || `Voiceover Version ${realIdx}`}</span>
+                                                        <span className="file-type">.mp4</span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: 'var(--spacing-xs)', marginTop: 'var(--spacing-xs)' }}>
+                                                        <a
+                                                            href={vid.url}
+                                                            download
+                                                            className="btn btn-secondary btn-sm"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            <Download size={14} />
+                                                            Download
+                                                        </a>
+                                                        <button
+                                                            className="btn btn-danger btn-sm"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleDeleteVersion(realIdx);
+                                                            }}
+                                                            title="Delete this version"
+                                                        >
+                                                            🗑️ Delete
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Audio Only */}
+                                <div className="form-group" style={{ marginTop: 'var(--spacing-lg)' }}>
+                                    <label>🎵 Raw Audio</label>
                                     {project?.voiceover?.audioUrl ? (
                                         <div className="file-item">
                                             <div className="file-info">
@@ -599,9 +1457,8 @@ const Editor = () => {
                                                 href={project.voiceover.audioUrl}
                                                 download
                                                 className="btn btn-secondary btn-sm"
-                                                style={{ marginTop: 'var(--spacing-xs)' }}
                                             >
-                                                <Download size={16} />
+                                                <Download size={14} />
                                                 Download
                                             </a>
                                         </div>
@@ -611,45 +1468,13 @@ const Editor = () => {
                                         </div>
                                     )}
                                 </div>
-
-                                {/* Processed Videos */}
-                                <div className="form-group">
-                                    <label>🎬 Processed Videos</label>
-                                    {project?.timeline?.tracks?.video?.filter(v => v.type === 'processed-voiceover').length > 0 ? (
-                                        <div className="files-list">
-                                            {project.timeline.tracks.video
-                                                .filter(v => v.type === 'processed-voiceover')
-                                                .map((vid, idx) => (
-                                                    <div key={idx} className="file-item">
-                                                        <div className="file-info">
-                                                            <span className="file-name">With Voiceover #{idx + 1}</span>
-                                                            <span className="file-type">.mp4</span>
-                                                        </div>
-                                                        <a
-                                                            href={vid.url}
-                                                            download
-                                                            className="btn btn-secondary btn-sm"
-                                                            style={{ marginTop: 'var(--spacing-xs)' }}
-                                                        >
-                                                            <Download size={16} />
-                                                            Download
-                                                        </a>
-                                                    </div>
-                                                ))
-                                            }
-                                        </div>
-                                    ) : (
-                                        <div className="empty-state-small">
-                                            No processed videos yet
-                                        </div>
-                                    )}
-                                </div>
                             </div>
                         )}
                     </div>
                 </div>
             </div>
 
+            {/* Scoped Styles */}
             <style>{`
         .editor {
           display: flex;
@@ -659,14 +1484,7 @@ const Editor = () => {
           overflow: hidden;
         }
 
-        .editor-topbar {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: var(--spacing-md) var(--spacing-lg);
-          background: var(--bg-secondary);
-          border-bottom: 1px solid var(--border);
-        }
+
 
         .topbar-left, .topbar-right {
           display: flex;
@@ -694,20 +1512,41 @@ const Editor = () => {
           border-bottom-color: var(--primary);
         }
 
+        .editor-container {
+          height: 100vh;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          background: #0f1115;
+        }
+
         .editor-main {
           display: flex;
           flex: 1;
           overflow: hidden;
+          min-height: 0;
         }
 
-        .editor-sidebar {
+        .editor-left {
           width: 80px;
-          background: var(--bg-secondary);
-          border-right: 1px solid var(--border);
+          background: #090b0f;
+          border-right: 1px solid rgba(255, 255, 255, 0.05);
           display: flex;
           flex-direction: column;
+          align-items: center;
           padding: var(--spacing-md) 0;
-          gap: var(--spacing-xs);
+          gap: var(--spacing-sm);
+        }
+
+        .editor-right {
+          width: 380px;
+          background: #11141b;
+          border-left: 1px solid rgba(255, 255, 255, 0.05);
+          display: flex;
+          flex-direction: column;
+          overflow-y: auto;
+          position: relative;
+          height: 100%;
         }
 
         .tool-btn {
@@ -734,21 +1573,123 @@ const Editor = () => {
           color: var(--primary);
         }
 
+        .editor-center {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden; /* Changed from auto to hidden to enforce internal container scaling */
+          min-width: 0;
+          min-height: 0;
+          background: #0f1115;
+        }
+
         .video-preview-container {
           flex: 1;
           display: flex;
           flex-direction: column;
-          overflow: hidden;
+          background: #000;
+          padding: 0;
+          position: relative;
+          min-height: 0;
         }
 
         .video-preview {
           flex: 1;
-          background: var(--bg-tertiary);
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: var(--spacing-xl);
+          padding: var(--spacing-xl); /* Increased padding to make video feel contained */
           position: relative;
+          min-height: 0;
+        }
+
+        .view-mode-selector {
+          position: absolute;
+          top: var(--spacing-md);
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          gap: var(--spacing-xs);
+          background: rgba(0, 0, 0, 0.6);
+          backdrop-filter: blur(10px);
+          padding: 4px;
+          border-radius: var(--radius-full);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          z-index: 10;
+        }
+
+        .view-mode-btn {
+          display: flex;
+          align-items: center;
+          gap: var(--spacing-xs);
+          padding: 6px 16px;
+          border-radius: var(--radius-full);
+          border: none;
+          background: transparent;
+          color: white;
+          font-size: 0.8rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .view-mode-btn:hover {
+          background: rgba(255, 255, 255, 0.1);
+        }
+
+        .view-mode-btn.active {
+          background: var(--primary);
+          box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+        }
+
+        .comparison-view {
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
+          gap: var(--spacing-md);
+          width: 100%;
+          height: 100%;
+          align-items: center;
+        }
+
+        .video-half {
+          display: flex;
+          flex-direction: column;
+          gap: var(--spacing-sm);
+          height: 100%;
+          justify-content: center;
+        }
+
+        .video-label {
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--text-muted);
+          text-align: center;
+        }
+
+        .comparison-video {
+          width: 100%;
+          height: 100%;
+          max-height: calc(100% - 30px);
+          object-fit: contain;
+          border-radius: var(--radius-md);
+          background: #000;
+        }
+
+        .comparison-divider {
+          width: 1px;
+          height: 80%;
+          background: var(--border);
+          position: relative;
+        }
+
+        .divider-line {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          left: 0;
+          right: 0;
         }
 
         .main-video-container {
@@ -760,13 +1701,16 @@ const Editor = () => {
           background: #000;
           border-radius: var(--radius-lg);
           overflow: hidden;
-          box-shadow: var(--shadow-xl);
+          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          position: relative;
         }
 
         .main-video {
-          max-width: 100%;
-          max-height: 100%;
+          width: 100%;
+          height: 100%;
           object-fit: contain;
+          border-radius: var(--radius-md);
         }
 
         .preview-placeholder {
@@ -779,10 +1723,12 @@ const Editor = () => {
         }
 
         .timeline {
-          height: 120px;
-          background: var(--bg-secondary);
-          border-top: 1px solid var(--border);
+          height: 120px; /* Reverted to 120px for better vertical balance */
+          background: linear-gradient(to bottom, #161920, #0f1115);
+          border-top: 1px solid rgba(255, 255, 255, 0.05);
           padding: var(--spacing-md);
+          position: relative;
+          overflow: hidden;
         }
 
         .timeline-header {
@@ -809,28 +1755,99 @@ const Editor = () => {
           align-items: center;
           gap: var(--spacing-xs);
           padding: var(--spacing-xs) var(--spacing-md);
-          background: var(--bg-tertiary);
-          border: 1px solid var(--border);
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: var(--radius-md);
-          font-size: 0.875rem;
-          color: var(--text-primary);
+          font-size: 0.8rem;
+          font-weight: 500;
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .version-chip:hover {
+          background: var(--bg-hover);
+          border-color: var(--primary);
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .version-chip.active {
+          background: linear-gradient(135deg, var(--primary), var(--secondary));
+          border-color: var(--primary);
+          color: white;
+          font-weight: 600;
         }
 
         .current-badge {
           padding: 2px 8px;
-          background: var(--primary);
+          background: rgba(255, 255, 255, 0.2);
           border-radius: var(--radius-sm);
           font-size: 0.75rem;
           color: white;
           font-weight: 600;
         }
 
+        .version-chip:not(.active) .current-badge {
+          background: var(--primary);
+        }
+
+        /* Refresh Button Animation */
+        .refresh-btn {
+          position: relative;
+          overflow: hidden;
+        }
+
+        .refresh-btn:hover {
+          animation: refreshPulse 0.6s ease-in-out;
+        }
+
+        .refresh-btn:active .refresh-icon {
+          animation: refreshSpin 0.5s linear;
+        }
+
+        .refresh-icon {
+          display: inline-block;
+          transition: transform 0.3s ease;
+        }
+
+        @keyframes refreshSpin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
+
+        @keyframes refreshPulse {
+          0%, 100% {
+            transform: scale(1);
+          }
+          50% {
+            transform: scale(1.05);
+          }
+        }
+
         .properties-panel {
-          width: 320px;
-          background: var(--bg-secondary);
-          border-left: 1px solid var(--border);
           padding: var(--spacing-lg);
           overflow-y: auto;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+        }
+
+        /* Glassmorphism for Topbar */
+        .editor-topbar {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: var(--spacing-sm) var(--spacing-xl);
+          background: rgba(15, 17, 21, 0.8);
+          backdrop-filter: blur(12px);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          position: sticky;
+          top: 0;
+          z-index: 100;
         }
 
         .properties-panel h3 {

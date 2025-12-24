@@ -21,7 +21,7 @@ class VoiceoverService {
         // If tone is specified, map it to appropriate voice settings
         let voiceSettings = { voice, speed, pitch };
         if (tone) {
-            voiceSettings = this.getToneVoiceMapping(tone);
+            voiceSettings = this.getToneVoiceMapping(tone, options.language);
         }
 
         // If ElevenLabs API key is available, use it
@@ -189,6 +189,7 @@ class VoiceoverService {
             free: [
                 { id: 'en-US', name: 'English (US)', language: 'en-US' },
                 { id: 'en-GB', name: 'English (UK)', language: 'en-GB' },
+                { id: 'hi-IN', name: 'Hindi', language: 'hi-IN' },
                 { id: 'es-ES', name: 'Spanish', language: 'es-ES' },
                 { id: 'fr-FR', name: 'French', language: 'fr-FR' },
                 { id: 'de-DE', name: 'German', language: 'de-DE' },
@@ -213,20 +214,24 @@ class VoiceoverService {
     /**
      * Get voice tone mappings
      * Maps user-friendly tones to TTS voice settings
-     * 
-     * IMPORTANT NOTE ON FREE GOOGLE TTS LIMITATIONS:
-     * The free Google Translate TTS API does NOT support pitch or speed adjustments.
-     * To provide tone variety, we use different English language variants:
-     * - en-US (American): Neutral, suitable for male voice
-     * - en-GB (British): Tends to sound lighter/clearer, suitable for female voice  
-     * - en-AU (Australian): More energetic tone, suitable for child voice
-     * 
-     * For true voice tone control, consider upgrading to:
-     * - Google Cloud Text-to-Speech (supports voice types and pitch/speed)
-     * - OpenAI TTS (6 distinct voices)
-     * - ElevenLabs (highly realistic AI voices)
      */
-    getToneVoiceMapping(tone) {
+    getToneVoiceMapping(tone, language = 'en') {
+        // Map common language codes to Google TTS/macOS compatible codes
+        const langMap = {
+            'en': 'en-US',
+            'hi': 'hi-IN',
+            'es': 'es-ES',
+            'fr': 'fr-FR',
+            'de': 'de-DE',
+            'it': 'it-IT',
+            'pt': 'pt-BR',
+            'ja': 'ja-JP',
+            'ko': 'ko-KR',
+            'zh': 'zh-CN'
+        };
+
+        const targetLang = langMap[language] || language || 'en-US';
+
         // ElevenLabs voice IDs (used if ELEVENLABS_API_KEY is configured)
         const elevenLabsVoices = {
             male: 'pNInz6obpgDQGcFmaJgB',      // Adam - Deep male
@@ -244,22 +249,22 @@ class VoiceoverService {
         const toneMappings = {
             male: {
                 voiceId: elevenLabsVoices.male,
-                voice: config.elevenLabsApiKey ? elevenLabsVoices.male : (config.openaiApiKey ? openaiVoices.male : 'en-US'),
-                language: 'en',
+                voice: config.elevenLabsApiKey ? elevenLabsVoices.male : (config.openaiApiKey ? openaiVoices.male : targetLang),
+                language: targetLang,
                 pitch: 1.0,
                 speed: 1.0
             },
             female: {
                 voiceId: elevenLabsVoices.female,
-                voice: config.elevenLabsApiKey ? elevenLabsVoices.female : (config.openaiApiKey ? openaiVoices.female : 'en-GB'),
-                language: 'en-GB',
+                voice: config.elevenLabsApiKey ? elevenLabsVoices.female : (config.openaiApiKey ? openaiVoices.female : targetLang),
+                language: targetLang,
                 pitch: 1.0,
                 speed: 1.0
             },
             child: {
                 voiceId: elevenLabsVoices.child,
-                voice: config.elevenLabsApiKey ? elevenLabsVoices.child : (config.openaiApiKey ? openaiVoices.child : 'en-AU'),
-                language: 'en-AU',
+                voice: config.elevenLabsApiKey ? elevenLabsVoices.child : (config.openaiApiKey ? openaiVoices.child : targetLang),
+                language: targetLang,
                 pitch: 1.0,
                 speed: 1.05
             }

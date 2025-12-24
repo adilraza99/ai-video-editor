@@ -69,6 +69,79 @@ class CaptionService {
     }
 
     /**
+     * Generate captions from script text (for voiceover-based videos)
+     * This creates timed captions based on the script instead of transcribing audio
+     */
+    async generateFromScript(scriptText, videoDuration) {
+        if (!scriptText || !scriptText.trim()) {
+            return [];
+        }
+
+        // Split script into caption-sized chunks (sentences or phrases)
+        const sentences = this.splitIntoSentences(scriptText);
+        const captions = [];
+
+        // Calculate time per sentence (distribute evenly across video duration)
+        const timePerSentence = videoDuration / sentences.length;
+
+        sentences.forEach((sentence, index) => {
+            const startTime = index * timePerSentence;
+            const endTime = (index + 1) * timePerSentence;
+
+            captions.push({
+                startTime: Math.round(startTime * 10) / 10,
+                endTime: Math.round(endTime * 10) / 10,
+                text: sentence.trim()
+            });
+        });
+
+        return captions;
+    }
+
+    /**
+     * Split text into sentences for captions
+     */
+    splitIntoSentences(text) {
+        // Split by sentence-ending punctuation
+        const sentences = text
+            .split(/(?<=[.!?])\s+/)
+            .filter(s => s.trim().length > 0);
+
+        // If sentences are too long, split by commas or phrases
+        const MAX_CAPTION_LENGTH = 80;
+        const result = [];
+
+        sentences.forEach(sentence => {
+            if (sentence.length <= MAX_CAPTION_LENGTH) {
+                result.push(sentence);
+            } else {
+                // Split long sentences by commas or words
+                const parts = sentence.split(/,\s+/);
+                parts.forEach(part => {
+                    if (part.length <= MAX_CAPTION_LENGTH) {
+                        result.push(part);
+                    } else {
+                        // Split very long parts into chunks of words
+                        const words = part.split(' ');
+                        let chunk = '';
+                        words.forEach(word => {
+                            if ((chunk + ' ' + word).length <= MAX_CAPTION_LENGTH) {
+                                chunk += (chunk ? ' ' : '') + word;
+                            } else {
+                                if (chunk) result.push(chunk);
+                                chunk = word;
+                            }
+                        });
+                        if (chunk) result.push(chunk);
+                    }
+                });
+            }
+        });
+
+        return result;
+    }
+
+    /**
      * Parse SRT format to caption array
      */
     parseSRT(srtContent) {
@@ -157,10 +230,9 @@ class CaptionService {
      * Translate captions to another language
      */
     async translateCaptions(captions, targetLanguage) {
-        // This would use translation service
-        // For now, return original captions
-        console.log(`Translation to ${targetLanguage} would happen here`);
-        return captions;
+        // Use the proper translation service
+        const translationService = (await import('./translationService.js')).default;
+        return await translationService.translateCaptions(captions, targetLanguage);
     }
 }
 
