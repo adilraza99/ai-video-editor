@@ -41,8 +41,8 @@ npm run dev
 ## 📍 Access Points
 
 - **Frontend Application**: http://localhost:5173
-- **Backend API**: http://localhost:5000
-- **Database**: mongodb://localhost:27017/clueso-clone
+- **Backend API**: http://localhost:5001/api
+- **Database**: mongodb://localhost:27017/clueso-ai-editor
 
 ## 🎯 First Steps
 
@@ -71,9 +71,9 @@ Clueso_AI_Editor/
 ## ⚙️ Configuration
 
 The `.env` file has been created in the `backend/` directory with default settings:
-- MongoDB: `mongodb://localhost:27017/clueso-clone`
+- MongoDB: `mongodb://localhost:27017/clueso-ai-editor`
 - JWT Secret: Change this in production!
-- Port: 5000
+- Port: 5001
 - FFmpeg: Auto-detected
 
 ### Optional: Add API Keys
@@ -93,8 +93,8 @@ GOOGLE_TRANSLATE_API_KEY=your_key_here
 ## 🔧 Troubleshooting
 
 ### Port Already in Use
-If port 5000 or 5173 is already in use:
-- Backend: Edit `backend/.env` and change `PORT=5000`
+If port 5001 or 5173 is already in use:
+- Backend: Edit `backend/.env` and change `PORT=5001`
 - Frontend: Edit `frontend/vite.config.js` and change server port
 
 ### MongoDB Connection Error

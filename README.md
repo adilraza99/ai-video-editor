@@ -77,7 +77,7 @@ PORT=5001
 NODE_ENV=development
 
 # Database
-MONGODB_URI=mongodb://localhost:27017/clueso-clone
+MONGODB_URI=mongodb://localhost:27017/clueso-ai-editor
 
 # JWT
 JWT_SECRET=your-super-secret-jwt-key-change-this
