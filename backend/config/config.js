@@ -3,11 +3,11 @@ dotenv.config();
 
 export const config = {
     // Server
-    port: process.env.PORT || 5001,
+    port: process.env.PORT || 5000,
     nodeEnv: process.env.NODE_ENV || 'development',
 
     // Database
-    mongodbUri: process.env.MONGODB_URI || 'mongodb://localhost:27017/clueso-ai-editor',
+    mongodbUri: process.env.MONGODB_URI || 'mongodb://localhost:27017/clueso-clone',
 
     // JWT
     jwtSecret: process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production',

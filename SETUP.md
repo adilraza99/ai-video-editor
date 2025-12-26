@@ -71,7 +71,7 @@ Clueso_AI_Editor/
 ## ⚙️ Configuration
 
 The `.env` file has been created in the `backend/` directory with default settings:
-- MongoDB: `mongodb://localhost:27017/clueso-ai-editor`
+- MongoDB: `mongodb://localhost:27017/clueso-clone`
 - JWT Secret: Change this in production!
 - Port: 5001
 - FFmpeg: Auto-detected

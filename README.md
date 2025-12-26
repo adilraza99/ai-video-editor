@@ -1,4 +1,4 @@
-# Clueso Clone - AI Video Editor
+# Clueso AI Editor Clone
 
 A powerful, AI-driven video editing platform that simplifies the creation of professional documentation and tutorial videos. This project is a full-stack clone of Clueso.io, featuring automated script generation, AI voiceovers, and intelligent localization.
 
@@ -81,7 +81,7 @@ Clueso_AI_Editor/
 **Backend (.env)**
 ```env
 PORT=5001
-MONGODB_URI=mongodb://localhost:27017/clueso-ai-editor
+MONGODB_URI=mongodb://localhost:27017/clueso-clone
 JWT_SECRET=your_jwt_secret
 GEMINI_API_KEY=your_gemini_key
 GOOGLE_APPLICATION_CREDENTIALS=path/to/gcp-key.json
