@@ -43,7 +43,7 @@ The backend service for Clueso AI Editor, built with Node.js, Express, and Mongo
     Create a `.env` file in this directory:
     ```env
     PORT=5001
-    MONGODB_URI=mongodb://localhost:27017/clueso-clone
+    MONGODB_URI=mongodb://localhost:27017/clueso-ai-editor
     JWT_SECRET=your_jwt_secret
     
     # AI Services
