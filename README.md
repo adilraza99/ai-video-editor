@@ -54,8 +54,8 @@ Clueso_AI_Editor/
 
 1.  **Clone the repository**
     ```bash
-    git clone <repository-url>
-    cd Clueso_AI_Editor
+    git clone https://github.com/adilraza99/ai-video-editor.git
+    cd ai-video-editor
     ```
 
 2.  **Setup Backend**
@@ -73,8 +73,8 @@ Clueso_AI_Editor/
     npm run dev
     ```
 
-4.  **Access the App**
-    Open [http://localhost:5173](http://localhost:5173) in your browser.
+4.  **Access the App (Locally)**
+    Open [http://localhost:5173](http://localhost:5173) in your browser to access the development server.
 
 ## 🔐 Environment Variables
 
@@ -86,6 +86,12 @@ JWT_SECRET=your_jwt_secret
 GEMINI_API_KEY=your_gemini_key
 GOOGLE_APPLICATION_CREDENTIALS=path/to/gcp-key.json
 ```
+
+## 📚 Documentation
+
+- [Project Overview](README.md)
+- [Detailed Setup Guide](SETUP.md)
+- [Feature Walkthrough](walkthrough.md)
 
 ## 🤝 Contributing
 
