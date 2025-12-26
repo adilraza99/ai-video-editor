@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'react-toastify';
-import { Video, Sparkles } from 'lucide-react';
+import { Video, Sparkles, Eye, EyeOff } from 'lucide-react';
 
 const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const { login } = useAuth();
@@ -16,7 +17,9 @@ const Login = () => {
     e.preventDefault();
     setLoading(true);
 
+    console.log('Login attempt with:', { email, passwordLength: password.length });
     const result = await login(email, password);
+    console.log('Login result:', result);
 
     if (result.success) {
       toast.success('Login successful!');
@@ -26,7 +29,7 @@ const Login = () => {
         navigate('/');
       }, 800);
     } else {
-      toast.error(result.message);
+      toast.error(result.message || 'Login failed');
       setLoading(false);
     }
   };
@@ -69,16 +72,26 @@ const Login = () => {
 
             <div className="form-group staggered-item" style={{ '--delay': '0.2s' }}>
               <label htmlFor="password">Password</label>
-              <input
-                type="password"
-                id="password"
-                className="premium-input"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-              />
+              <div className="password-input-wrapper">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  id="password"
+                  className="premium-input"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <button
@@ -291,6 +304,38 @@ const Login = () => {
                     margin-left: 4px;
                 }
 
+                /* Password Input Wrapper */
+                .password-input-wrapper {
+                    position: relative;
+                    width: 100%;
+                }
+
+                .password-toggle-btn {
+                    position: absolute;
+                    right: 12px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    background: transparent;
+                    border: none;
+                    color: rgba(255, 255, 255, 0.4);
+                    cursor: pointer;
+                    padding: 8px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    transition: all 0.2s ease;
+                    border-radius: 6px;
+                }
+
+                .password-toggle-btn:hover {
+                    color: rgba(255, 255, 255, 0.7);
+                    background: rgba(255, 255, 255, 0.05);
+                }
+
+                .password-toggle-btn:active {
+                    transform: translateY(-50%) scale(0.95);
+                }
+
                 .premium-input {
                     width: 100%;
                     background: rgba(255, 255, 255, 0.03);
@@ -300,6 +345,10 @@ const Login = () => {
                     color: white;
                     font-size: 1rem;
                     transition: all 0.2s ease;
+                }
+
+                .password-input-wrapper .premium-input {
+                    padding-right: 48px;
                 }
 
                 .premium-input:focus {

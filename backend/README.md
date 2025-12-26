@@ -6,11 +6,11 @@ The backend service for Clueso AI Editor, built with Node.js, Express, and Mongo
 
 -   **Routes**: API endpoints separated by resource (projects, editing, auth).
 -   **Services**: Encapsulated business logic and external API integrations.
-    -   `scriptGenerationService.js`: Integrates with Google Gemini for script generation.
-    -   `voiceoverService.js`: Handles TTS using Google Cloud Text-to-Speech.
-    -   `captionService.js`: Generates captions from scripts or audio transcription.
-    -   `translationService.js`: Manages content localization.
-    -   `videoProcessingService.js`: Wraps FFmpeg for video manipulation.
+    -   `scriptGenerationService.js`: Integrates with Google Gemini for AI script generation.
+    -   `voiceoverService.js`: Handles TTS using Google Cloud Text-to-Speech (with macOS `say` fallback).
+    -   `captionService.js`: Generates captions using **AssemblyAI** or **OpenAI Whisper** for transcription.
+    -   `translationService.js`: Manages content localization via Google Gemini.
+    -   `videoProcessingService.js`: Wraps FFmpeg for video manipulation, audio extraction, and audio stretching.
 -   **Models**: Mongoose schemas for User and Project data.
 
 ## 🔌 API Endpoints
@@ -48,6 +48,7 @@ The backend service for Clueso AI Editor, built with Node.js, Express, and Mongo
     
     # AI Services
     GEMINI_API_KEY=your_gemini_key
+    ASSEMBLYAI_API_KEY=your_assemblyai_key
     OPENAI_API_KEY=your_openai_key (Optional)
     GOOGLE_APPLICATION_CREDENTIALS=path/to/credentials.json
     ```

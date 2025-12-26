@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import ffmpeg from 'fluent-ffmpeg';
 import { protect } from '../middleware/auth.js';
 import Project from '../models/Project.js';
 import Video from '../models/Video.js';
@@ -314,6 +315,103 @@ router.post('/translate', protect, async (req, res) => {
             success: false,
             message: 'Failed to translate captions'
         });
+    }
+});
+
+// @route   POST /api/editing/dub
+// @desc    Dub video audio into another language  
+// @access  Private
+router.post('/dub', protect, async (req, res) => {
+    try {
+        const { projectId, targetLanguage, tone } = req.body;
+
+        const project = await Project.findById(projectId);
+        if (!project || project.user.toString() !== req.user._id.toString()) {
+            return res.status(404).json({ success: false, message: 'Project not found' });
+        }
+
+        if (!project.timeline?.tracks?.video?.length) {
+            return res.status(400).json({ success: false, message: 'No video found in project' });
+        }
+
+        console.log(`Dubbing: ${targetLanguage}`);
+
+        const originalVideo = project.timeline.tracks.video[0];
+        const videoFilename = path.basename(originalVideo.url);
+        const videoPath = path.join(config.uploadDir, 'videos', videoFilename);
+
+        if (!fs.existsSync(videoPath)) {
+            return res.status(404).json({ success: false, message: 'Video file not found' });
+        }
+
+        // Extract audio
+        const audioPath = path.join(config.uploadDir, 'temp', `audio-${uuidv4()}.mp3`);
+        if (!fs.existsSync(path.dirname(audioPath))) {
+            fs.mkdirSync(path.dirname(audioPath), { recursive: true });
+        }
+        await videoProcessingService.extractAudio(videoPath, audioPath);
+
+        // Transcribe
+        const captions = await captionService.generateCaptions(videoPath, audioPath, { language: 'en' });
+        const transcribedText = captions.map(c => c.text).join(' ');
+
+        // Translate
+        const translatedText = await translationService.translateText(transcribedText, targetLanguage);
+
+        // Get video duration to match audio length
+        const videoDuration = await videoProcessingService.getVideoDuration(videoPath);
+        console.log(`Video duration: ${videoDuration}s, Text: "${translatedText}"`);
+
+        // Calculate ideal speech rate to match video duration
+        // Normal speech: ~150 words/min = ~12.5 chars/sec
+        const normalCharsPerSec = 12.5;
+        const targetCharsPerSec = translatedText.length / videoDuration;
+        const speechRate = targetCharsPerSec / normalCharsPerSec; // <1 = slower, >1 = faster
+        console.log(`Speech rate: ${speechRate.toFixed(2)}x (${targetCharsPerSec.toFixed(1)} ch/s, target: ${videoDuration}s)`);
+
+        // Generate TTS with speech rate to naturally match video duration
+        const dubbedAudioFilename = `dubbed-audio-${targetLanguage}-${uuidv4()}.mp3`;
+        const dubbedAudioPath = path.join(config.uploadDir, 'audio', dubbedAudioFilename);
+
+        await voiceoverService.generateVoiceover(translatedText, {
+            tone: tone || 'professional',
+            language: targetLanguage,
+            outputPath: dubbedAudioPath,
+            speechRate: Math.max(0.1, Math.min(speechRate, 3.0)), // Clamp 0.1x-3.0x
+            targetDuration: videoDuration
+        });
+
+        // Merge - Replace audio track completely
+        const outputFilename = `dubbed-${targetLanguage}-${uuidv4()}.mp4`;
+        const outputPath = path.join(config.uploadDir, 'videos', outputFilename);
+
+        // Use existing replaceAudio method which properly handles audio replacement
+        await videoProcessingService.replaceAudio(videoPath, dubbedAudioPath, outputPath);
+
+        const metadata = await videoProcessingService.getVideoMetadata(outputPath);
+        const languageName = translationService.getSupportedLanguages().find(l => l.code === targetLanguage)?.name || targetLanguage;
+
+        project.timeline.tracks.video.push({
+            url: `/uploads/videos/${outputFilename}`,
+            name: `Dubbed - ${languageName}`,
+            type: 'dubbed',
+            duration: metadata.format.duration,
+            language: targetLanguage,
+            script: translatedText,
+            createdAt: new Date()
+        });
+
+        project.markModified('timeline');
+        await project.save();
+
+        // Cleanup
+        if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+        if (fs.existsSync(dubbedAudioPath)) fs.unlinkSync(dubbedAudioPath);
+
+        res.json({ success: true, data: { project, dubbedVersion: project.timeline.tracks.video[project.timeline.tracks.video.length - 1] } });
+    } catch (error) {
+        console.error('Dubbing error:', error);
+        res.status(500).json({ success: false, message: 'Failed to dub video', error: error.message });
     }
 });
 

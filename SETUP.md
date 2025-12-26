@@ -80,7 +80,13 @@ The `.env` file has been created in the `backend/` directory with default settin
 
 Edit `backend/.env` to add premium features:
 ```bash
-# OpenAI (for better TTS and Whisper)
+# Google Gemini (Script Generation & Translation)
+GEMINI_API_KEY=your_gemini_key
+
+# AssemblyAI (Transcription)
+ASSEMBLYAI_API_KEY=your_assemblyai_key
+
+# OpenAI (Alternative Transcription and better TTS)
 OPENAI_API_KEY=your_key_here
 
 # ElevenLabs (for premium voices)

@@ -25,6 +25,7 @@ export const config = {
     openaiApiKey: process.env.OPENAI_API_KEY || null,
     elevenLabsApiKey: process.env.ELEVENLABS_API_KEY || null,
     geminiApiKey: process.env.GEMINI_API_KEY || null,
+    assemblyAIApiKey: process.env.ASSEMBLYAI_API_KEY || null,
 
     // Translation
     googleTranslateApiKey: process.env.GOOGLE_TRANSLATE_API_KEY || null,

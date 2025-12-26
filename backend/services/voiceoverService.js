@@ -3,6 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { config } from '../config/config.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import ffmpeg from 'fluent-ffmpeg';
 
 class VoiceoverService {
     /**
@@ -107,24 +110,15 @@ class VoiceoverService {
 
     /**
      * Generate voiceover using free Google TTS
-     * Simplified to work reliably - truncates long text to 200 chars
+     * Handles long text by splitting into chunks and concatenating
      */
     async generateFreeTTS(text, outputPath, options = {}) {
         try {
             const lang = options.language || 'en';
-            const MAX_CHARS = 200; // Google TTS limit
+            const MAX_CHARS = 200; // Google TTS limit per request
 
-            // Truncate text if too long (user can generate shorter scripts)
-            let finalText = text;
-            if (text.length > MAX_CHARS) {
-                console.log(`Text too long (${text.length} chars), truncating to ${MAX_CHARS}`);
-                finalText = text.substring(0, MAX_CHARS);
-            }
-
-            // Try macOS say command first for better voice variety
+            // Try macOS say command first for better voice variety (handles long text)
             try {
-                const { exec } = require('child_process');
-                const { promisify } = require('util');
                 const execPromise = promisify(exec);
 
                 const voiceMap = {
@@ -134,14 +128,22 @@ class VoiceoverService {
                 };
 
                 const voice = voiceMap[lang] || 'Alex';
-                console.log(`Using macOS voice: ${voice}`);
+
+                // Calculate speech rate for macOS say
+                // Default rate is ~175 words/min, we can adjust from 1-500
+                const speechRate = options.speechRate || 1.0;
+                const targetDuration = options.targetDuration || null;
+                const sayRate = Math.max(50, Math.min(350, Math.round(175 * speechRate)));
+
+                console.log(`Using macOS voice: ${voice}, rate: ${sayRate} wpm (${speechRate}x) for ${text.length} chars`);
 
                 const tempAiff = outputPath.replace('.mp3', '.aiff');
-                const escapedText = finalText.replace(/"/g, '\\"');
-                await execPromise(`say -v "${voice}" -o "${tempAiff}" "${escapedText}"`);
+                const escapedText = text.replace(/"/g, '\\"');
+
+                // Use say with custom rate
+                await execPromise(`say -v "${voice}" -r ${sayRate} -o "${tempAiff}" "${escapedText}"`);
 
                 // Convert to MP3
-                const ffmpeg = require('fluent-ffmpeg');
                 await new Promise((resolve, reject) => {
                     ffmpeg(tempAiff)
                         .toFormat('mp3')
@@ -154,25 +156,126 @@ class VoiceoverService {
                         .save(outputPath);
                 });
 
-                console.log(`✅ Audio with ${voice} voice: ${outputPath}`);
+                // If we have a target duration and audio is shorter, add silence padding
+                if (targetDuration) {
+                    const metadata = await new Promise((resolve, reject) => {
+                        ffmpeg.ffprobe(outputPath, (err, metadata) => {
+                            if (err) reject(err);
+                            else resolve(metadata);
+                        });
+                    });
+                    const audioDuration = metadata.format.duration;
+
+                    if (audioDuration < targetDuration) {
+                        console.log(`Adding silence padding: ${audioDuration}s -> ${targetDuration}s`);
+                        const paddedPath = outputPath.replace('.mp3', '-padded.mp3');
+                        await new Promise((resolve, reject) => {
+                            ffmpeg(outputPath)
+                                .audioFilters([`apad=whole_dur=${targetDuration}`])
+                                .toFormat('mp3')
+                                .audioBitrate(192)
+                                .on('end', () => {
+                                    fs.renameSync(paddedPath, outputPath);
+                                    resolve();
+                                })
+                                .on('error', reject)
+                                .save(paddedPath);
+                        });
+                        console.log(`✅ Padded audio to ${targetDuration}s: ${outputPath}`);
+                    } else {
+                        console.log(`✅ Audio duration (${audioDuration}s) matches target`);
+                    }
+                }
+
+                console.log(`✅ Full audio with ${voice} voice (${text.length} chars): ${outputPath}`);
                 return outputPath;
             } catch (sayError) {
-                console.log('macOS say failed, using Google TTS...');
+                console.log(`macOS say failed: ${sayError.message}`);
+                if (sayError.stderr) console.log(`stderr: ${sayError.stderr}`);
+                if (sayError.stdout) console.log(`stdout: ${sayError.stdout}`);
+                console.log('Falling back to Google TTS with chunking...');
             }
 
-            console.log(`Generating TTS for: "${finalText.substring(0, 50)}..."`);
+            // Fallback: Google TTS with chunking for long text
+            if (text.length <= MAX_CHARS) {
+                // Simple case: text fits in one request
+                console.log(`Generating TTS for: "${text.substring(0, 50)}..."`);
+                const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=${lang}&client=tw-ob`;
 
-            const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(finalText)}&tl=${lang}&client=tw-ob`;
+                const response = await axios({
+                    method: 'get',
+                    url: url,
+                    responseType: 'arraybuffer',
+                    headers: { 'User-Agent': 'Mozilla/5.0' }
+                });
 
-            const response = await axios({
-                method: 'get',
-                url: url,
-                responseType: 'arraybuffer',
-                headers: { 'User-Agent': 'Mozilla/5.0' }
+                fs.writeFileSync(outputPath, response.data);
+                console.log(`✅ Audio generated: ${outputPath}`);
+                return outputPath;
+            }
+
+            // Complex case: split text into sentences and generate multiple audio files
+            console.log(`Text too long (${text.length} chars), splitting into chunks...`);
+
+            // Split by sentences
+            const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+            const audioChunks = [];
+            let currentChunk = '';
+            const chunks = [];
+
+            // Group sentences into chunks under MAX_CHARS
+            sentences.forEach(sentence => {
+                if ((currentChunk + sentence).length <= MAX_CHARS) {
+                    currentChunk += sentence;
+                } else {
+                    if (currentChunk) chunks.push(currentChunk.trim());
+                    currentChunk = sentence;
+                }
+            });
+            if (currentChunk) chunks.push(currentChunk.trim());
+
+            console.log(`Split into ${chunks.length} chunks for TTS generation`);
+
+            // Generate audio for each chunk
+            const tempDir = path.dirname(outputPath);
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                const chunkPath = path.join(tempDir, `chunk-${i}-${uuidv4()}.mp3`);
+
+                const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${lang}&client=tw-ob`;
+                const response = await axios({
+                    method: 'get',
+                    url: url,
+                    responseType: 'arraybuffer',
+                    headers: { 'User-Agent': 'Mozilla/5.0' }
+                });
+
+                fs.writeFileSync(chunkPath, response.data);
+                audioChunks.push(chunkPath);
+                console.log(`✅ Chunk ${i + 1}/${chunks.length} generated`);
+            }
+
+            // Concatenate all chunks using FFmpeg
+            const listPath = path.join(tempDir, `concat-list-${uuidv4()}.txt`);
+            const listContent = audioChunks.map(p => `file '${p}'`).join('\n');
+            fs.writeFileSync(listPath, listContent);
+
+            await new Promise((resolve, reject) => {
+                ffmpeg()
+                    .input(listPath)
+                    .inputOptions(['-f concat', '-safe 0'])
+                    .outputOptions(['-c copy'])
+                    .on('end', () => {
+                        // Cleanup chunks
+                        audioChunks.forEach(chunk => { if (fs.existsSync(chunk)) fs.unlinkSync(chunk); });
+                        if (fs.existsSync(listPath)) fs.unlinkSync(listPath);
+                        resolve();
+                    })
+                    .on('error', reject)
+                    .save(outputPath);
             });
 
-            fs.writeFileSync(outputPath, response.data);
-            console.log(`✅ Audio generated: ${outputPath}`);
+            console.log(`✅ Full audio generated from ${chunks.length} chunks: ${outputPath}`);
             return outputPath;
         } catch (error) {
             console.error('Free TTS error:', error.message);

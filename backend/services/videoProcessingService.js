@@ -39,6 +39,19 @@ class VideoProcessingService {
     }
 
     /**
+     * Get audio duration in seconds
+     */
+    async getAudioDuration(audioPath) {
+        try {
+            const metadata = await this.getVideoMetadata(audioPath);
+            return metadata.format.duration;
+        } catch (error) {
+            console.error('Error getting audio duration:', error);
+            throw new Error('Failed to get audio duration');
+        }
+    }
+
+    /**
      * Generate thumbnail from video
      */
     async generateThumbnail(videoPath, outputPath) {

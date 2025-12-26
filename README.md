@@ -4,10 +4,12 @@ A powerful, AI-driven video editing platform that simplifies the creation of pro
 
 ## 🚀 Key Features
 
--   **AI Script Generation**: Automatically generates scripts from screen recordings or raw footage.
+-   **AI Script Generation**: Automatically generates scripts from screen recordings or raw footage using Google Gemini.
 -   **Neural Voiceovers**: High-quality AI voiceover generation with support for multiple tones and languages.
+-   **Full-Video Transcription**: Integrated with **AssemblyAI** (and optional OpenAI Whisper) for accurate, time-synced transcriptions of your existing footage.
 -   **Smart Captions**: Auto-generated captions that sync perfectly with your script (Script-Based Generation) or audio transcription.
--   **One-Click Localization**: instantly translate your video's script, voiceover, and captions into multiple languages (Hindi, Spanish, French, German).
+-   **One-Click Localization**: Instantly translate your video's script, voiceover, and captions into multiple languages (Hindi, Spanish, French, German).
+-   **AI Dubbing (Beta)**: experimental feature to translate spoken audio while preserving timing and tone (Currently in Beta/Coming Soon).
 -   **Interactive Timeline**: Multi-track timeline for video, audio, and captions.
 -   **Version Control**: Manage multiple versions of voiceovers and edits with ease. Protected original version and safe delete functionality.
 
@@ -16,9 +18,11 @@ A powerful, AI-driven video editing platform that simplifies the creation of pro
 -   **Frontend**: React, Vite, Context API, Tailwind CSS
 -   **Backend**: Node.js, Express, MongoDB
 -   **AI Services**: 
-    -   Google Gemini (Script Generation, Translation)
-    -   OpenAI Whisper (Transcription - *Optional*)
-    -   Google Cloud Text-to-Speech (Voiceover)
+    -   **Google Gemini**: Script Generation & Translation
+    -   **AssemblyAI**: Primary Transcription Service
+    -   **OpenAI Whisper**: High-accuracy Transcription (*Optional*)
+    -   **Google Cloud TTS**: Primary Voiceover Service
+    -   **macOS `say`**: Fallback TTS for local development
 
 ## 📦 Project Structure
 

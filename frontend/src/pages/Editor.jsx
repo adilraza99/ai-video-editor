@@ -11,6 +11,7 @@ import {
     Type,
     Music,
     Globe,
+    Globe2,
     Image as ImageIcon,
     Settings,
     Play,
@@ -55,10 +56,11 @@ const Editor = () => {
         videoDuration: null  // Track video duration
     });
 
-    const [targetLanguage, setTargetLanguage] = useState('en');
+    const [targetLanguage, setTargetLanguage] = useState('en'); // Default to English for testing dubbing accuracy
     const [sourceLanguage, setSourceLanguage] = useState('en'); // Original audio language
     const [generatingCaptions, setGeneratingCaptions] = useState(false);
     const [translating, setTranslating] = useState(false);
+    const [dubbing, setDubbing] = useState(false);
     const [supportedLanguages, setSupportedLanguages] = useState([]);
 
     useEffect(() => {
@@ -244,7 +246,7 @@ const Editor = () => {
 
             const response = await api.post('/editing/captions', {
                 projectId,
-                language: sourceLanguage,
+                language: 'en', // Always use English for captions
                 // Pass script if we want to align captions with it
                 script: shouldUseScript ? voiceoverData.script : undefined
             });
@@ -310,6 +312,32 @@ const Editor = () => {
             toast.error('Localized audio generation failed');
         } finally {
             setVoiceoverData(prev => ({ ...prev, generatingVoiceover: false }));
+        }
+    };
+
+    const handleDubVideo = async () => {
+        setDubbing(true);
+        try {
+            toast.info('Starting dubbing process... This may take a few minutes.');
+
+            const response = await api.post('/editing/dub', {
+                projectId,
+                targetLanguage,
+                tone: voiceoverData.tone
+            });
+
+            const updatedProject = response.data.data.project;
+            setProject(updatedProject);
+
+            // Switch to the newly dubbed version
+            setActiveVersionIndex(updatedProject.timeline.tracks.video.length - 1);
+
+            toast.success(`Video dubbed to ${supportedLanguages.find(l => l.code === targetLanguage)?.name || targetLanguage}!`);
+        } catch (error) {
+            console.error('Dubbing error:', error);
+            toast.error(error.response?.data?.message || 'Failed to dub video');
+        } finally {
+            setDubbing(false);
         }
     };
 
@@ -654,6 +682,27 @@ const Editor = () => {
                     >
                         <Music size={24} />
                         <span>Music</span>
+                    </button>
+
+                    <button
+                        className={`tool-btn ${activePanel === 'dubbing' ? 'active' : ''}`}
+                        onClick={() => setActivePanel('dubbing')}
+                        title="Dubbing (Coming Soon)"
+                        style={{ position: 'relative' }}
+                    >
+                        <Globe2 size={24} />
+                        <span>Dubbing</span>
+                        <span style={{
+                            position: 'absolute',
+                            top: '5px',
+                            right: '5px',
+                            background: 'var(--primary)',
+                            color: 'white',
+                            fontSize: '0.6rem',
+                            padding: '1px 4px',
+                            borderRadius: '4px',
+                            fontWeight: 'bold'
+                        }}>SOON</span>
                     </button>
 
                     <button
@@ -1052,31 +1101,8 @@ const Editor = () => {
                         {activePanel === 'captions' && (
                             <div className="panel-section">
                                 <p className="panel-description">
-                                    Auto-generate and customize captions
+                                    Auto-generate and customize captions for your video
                                 </p>
-
-                                <div className="form-group">
-                                    <label>Video's Original Language</label>
-                                    <select
-                                        className="select"
-                                        value={sourceLanguage}
-                                        onChange={(e) => setSourceLanguage(e.target.value)}
-                                    >
-                                        {supportedLanguages.length > 0 ? (
-                                            supportedLanguages.map(lang => (
-                                                <option key={lang.code} value={lang.code}>
-                                                    {lang.name}
-                                                </option>
-                                            ))
-                                        ) : (
-                                            <>
-                                                <option value="en">English</option>
-                                                <option value="hi">Hindi</option>
-                                            </>
-                                        )}
-                                    </select>
-                                    <small className="help-text">Used to transcribe audio from the original video.</small>
-                                </div>
 
                                 <button
                                     className="btn btn-secondary"
@@ -1084,7 +1110,7 @@ const Editor = () => {
                                     onClick={handleGenerateCaptions}
                                     disabled={generatingCaptions}
                                 >
-                                    {generatingCaptions ? 'Transcription in Progress...' : '🎙️ Transcribe original video'}
+                                    {generatingCaptions ? 'Generating Captions...' : '🎙️ Generate Captions'}
                                 </button>
 
                                 <div className="form-group" style={{
@@ -1110,16 +1136,64 @@ const Editor = () => {
                                         {project?.captions?.enabled ? 'ENABLED' : 'DISABLED'}
                                     </button>
                                 </div>
+
                                 <div className="form-group">
                                     <label>Font Size</label>
-                                    <input type="range" min="12" max="48" defaultValue="24" className="input" />
+                                    <input
+                                        type="range"
+                                        min="12"
+                                        max="48"
+                                        value={project?.captions?.style?.fontSize || 24}
+                                        onChange={async (e) => {
+                                            const newFontSize = parseInt(e.target.value);
+                                            try {
+                                                const response = await api.put(`/projects/${projectId}`, {
+                                                    captions: {
+                                                        ...project.captions,
+                                                        style: {
+                                                            ...project.captions?.style,
+                                                            fontSize: newFontSize
+                                                        }
+                                                    }
+                                                });
+                                                setProject(response.data.data);
+                                            } catch (error) {
+                                                console.error('Failed to update font size:', error);
+                                            }
+                                        }}
+                                        className="input"
+                                    />
+                                    <small className="help-text">Current size: {project?.captions?.style?.fontSize || 24}px</small>
                                 </div>
+
                                 <div className="form-group">
                                     <label>Position</label>
-                                    <select className="select">
-                                        <option>Bottom</option>
-                                        <option>Top</option>
-                                        <option>Center</option>
+                                    <select
+                                        className="select"
+                                        value={project?.captions?.style?.position || 'bottom'}
+                                        onChange={async (e) => {
+                                            const newPosition = e.target.value;
+                                            try {
+                                                const response = await api.put(`/projects/${projectId}`, {
+                                                    captions: {
+                                                        ...project.captions,
+                                                        style: {
+                                                            ...project.captions?.style,
+                                                            position: newPosition
+                                                        }
+                                                    }
+                                                });
+                                                setProject(response.data.data);
+                                                toast.success(`Caption position: ${newPosition}`);
+                                            } catch (error) {
+                                                console.error('Failed to update position:', error);
+                                                toast.error('Failed to update position');
+                                            }
+                                        }}
+                                    >
+                                        <option value="bottom">Bottom</option>
+                                        <option value="top">Top</option>
+                                        <option value="center">Center</option>
                                     </select>
                                 </div>
                             </div>
@@ -1242,6 +1316,40 @@ const Editor = () => {
                                         ℹ️ Supported formats: MP3, WAV, AAC, M4A (Max 50MB)
                                     </div>
                                 )}
+                            </div>
+                        )}
+
+                        {activePanel === 'dubbing' && (
+                            <div className="panel-section">
+                                <p className="panel-description">
+                                    Translate your video's spoken audio into another language
+                                </p>
+                                <div style={{
+                                    padding: 'var(--spacing-2xl)',
+                                    textAlign: 'center',
+                                    background: 'var(--bg-tertiary)',
+                                    borderRadius: 'var(--radius-lg)',
+                                    border: '2px dashed var(--border)',
+                                    marginTop: 'var(--spacing-lg)'
+                                }}>
+                                    <div style={{ fontSize: '3rem', marginBottom: 'var(--spacing-md)' }}>🎙️</div>
+                                    <h3 style={{ marginBottom: 'var(--spacing-sm)', color: 'var(--text-primary)' }}>Coming Soon</h3>
+                                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
+                                        AI Video Dubbing is currently under development.
+                                        Soon you'll be able to translate your videos into 20+ languages with perfect lip-sync and voice preservation!
+                                    </p>
+                                    <div style={{
+                                        marginTop: 'var(--spacing-lg)',
+                                        padding: 'var(--spacing-sm)',
+                                        background: 'rgba(99, 102, 241, 0.1)',
+                                        borderRadius: 'var(--radius-sm)',
+                                        fontSize: '0.75rem',
+                                        color: 'var(--primary)',
+                                        fontWeight: '600'
+                                    }}>
+                                        🚀 STAGE: BETA TESTING
+                                    </div>
+                                </div>
                             </div>
                         )}
 

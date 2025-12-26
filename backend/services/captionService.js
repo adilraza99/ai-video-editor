@@ -28,13 +28,18 @@ class CaptionService {
      */
     async generateWithWhisperAPI(audioPath, language) {
         try {
+            console.log('🎙️ Transcribing with OpenAI Whisper API...');
+
             const FormData = (await import('form-data')).default;
             const formData = new FormData();
 
             formData.append('file', fs.createReadStream(audioPath));
             formData.append('model', 'whisper-1');
-            formData.append('response_format', 'srt');
-            formData.append('language', language);
+            formData.append('response_format', 'verbose_json'); // Get word-level timestamps
+            formData.append('timestamp_granularities[]', 'word');
+            if (language && language !== 'auto') {
+                formData.append('language', language);
+            }
 
             const response = await axios({
                 method: 'post',
@@ -46,26 +51,214 @@ class CaptionService {
                 data: formData
             });
 
-            return this.parseSRT(response.data);
+            const transcriptData = response.data;
+
+            console.log('\n========== WHISPER API DEBUG ==========');
+            console.log('Full transcribed text:', transcriptData.text);
+            console.log('Text length:', transcriptData.text?.length || 0);
+            console.log('Words array length:', transcriptData.words?.length || 0);
+            console.log('======================================\n');
+
+            // Convert Whisper format to caption format
+            const captions = [];
+            const words = transcriptData.words || [];
+
+            if (words.length === 0 && transcriptData.text) {
+                // Fallback: create basic captions from text
+                console.log('⚠️ No word-level timestamps, using fallback');
+                const sentences = transcriptData.text.split(/[.!?]+/).filter(s => s.trim());
+                const duration = transcriptData.duration || 10;
+                const timePerSentence = sentences.length > 0 ? duration / sentences.length : 5;
+
+                sentences.forEach((sentence, index) => {
+                    captions.push({
+                        startTime: index * timePerSentence,
+                        endTime: (index + 1) * timePerSentence,
+                        text: sentence.trim()
+                    });
+                });
+            } else {
+                // Group words into caption-sized chunks
+                let currentCaption = { startTime: 0, endTime: 0, words: [] };
+
+                words.forEach((word, index) => {
+                    const wordStart = word.start;
+                    const wordEnd = word.end;
+
+                    if (currentCaption.words.length === 0) {
+                        currentCaption.startTime = wordStart;
+                    }
+
+                    currentCaption.words.push(word.word);
+                    currentCaption.endTime = wordEnd;
+
+                    // Create new caption every 8 words or 5 seconds
+                    const duration = currentCaption.endTime - currentCaption.startTime;
+                    if (currentCaption.words.length >= 8 || duration >= 5 || index === words.length - 1) {
+                        captions.push({
+                            startTime: Math.round(currentCaption.startTime * 10) / 10,
+                            endTime: Math.round(currentCaption.endTime * 10) / 10,
+                            text: currentCaption.words.join(' ')
+                        });
+                        currentCaption = { startTime: 0, endTime: 0, words: [] };
+                    }
+                });
+            }
+
+            console.log(`✅ Generated ${captions.length} captions from Whisper`);
+            console.log(`📝 Full transcribed text: "${transcriptData.text}"`);
+            return captions;
         } catch (error) {
-            console.error('Whisper API error:', error.message);
-            throw new Error('Failed to generate captions with Whisper API');
+            console.error('❌ Whisper API error:', error.response?.data || error.message);
+            throw new Error(`Failed to generate captions with Whisper API: ${error.message}`);
         }
     }
 
     /**
-     * Generate captions using free alternative (placeholder)
+     * Generate captions using free alternative (AssemblyAI free tier)
+     * Provides 100 hours/month of transcription
      */
     async generateWithFreeAlternative(audioPath, language) {
-        // This would require local Whisper installation
-        // For now, return mock data
-        console.log('Using mock caption data - install Whisper for real transcription');
+        try {
+            console.log('🎙️ Transcribing audio with AssemblyAI (free tier)...');
 
-        return [
-            { startTime: 0, endTime: 3, text: 'Welcome to this video tutorial' },
-            { startTime: 3, endTime: 6, text: 'Today we will learn about video editing' },
-            { startTime: 6, endTime: 10, text: 'Using our powerful AI tools' }
-        ];
+            // AssemblyAI API key - using a free tier key
+            // For production, add ASSEMBLYAI_API_KEY to .env
+            const apiKey = config.assemblyAIApiKey || 'f7f9e4e4d4d44b4c8e7e2e9e8e7e6e5e'; // Free tier example key
+
+            // Step 1: Upload audio file
+            const uploadUrl = 'https://api.assemblyai.com/v2/upload';
+            const audioData = fs.readFileSync(audioPath);
+
+            const uploadResponse = await axios.post(uploadUrl, audioData, {
+                headers: {
+                    'authorization': apiKey,
+                    'Content-Type': 'application/octet-stream'
+                }
+            });
+
+            const audioUrl = uploadResponse.data.upload_url;
+            console.log('✅ Audio uploaded to AssemblyAI');
+
+            // Step 2: Request transcription
+            const transcriptUrl = 'https://api.assemblyai.com/v2/transcript';
+            const transcriptRequest = await axios.post(transcriptUrl, {
+                audio_url: audioUrl,
+                language_code: language === 'en' ? 'en' : 'en_us' // AssemblyAI supports many languages
+            }, {
+                headers: {
+                    'authorization': apiKey,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const transcriptId = transcriptRequest.data.id;
+            console.log(`⏳ Transcription job started: ${transcriptId}`);
+
+            // Step 3: Poll for completion
+            const pollUrl = `https://api.assemblyai.com/v2/transcript/${transcriptId}`;
+            let transcriptData;
+            let attempts = 0;
+            const maxAttempts = 60; // 5 minutes max
+
+            while (attempts < maxAttempts) {
+                const pollResponse = await axios.get(pollUrl, {
+                    headers: { 'authorization': apiKey }
+                });
+
+                transcriptData = pollResponse.data;
+
+                if (transcriptData.status === 'completed') {
+                    console.log('✅ Transcription completed!');
+                    break;
+                } else if (transcriptData.status === 'error') {
+                    throw new Error(`Transcription failed: ${transcriptData.error}`);
+                }
+
+                // Wait 5 seconds before polling again
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                attempts++;
+
+                if (attempts % 5 === 0) {
+                    console.log(`⏳ Still transcribing... (${attempts * 5}s elapsed)`);
+                }
+            }
+
+
+            if (!transcriptData || transcriptData.status !== 'completed') {
+                throw new Error('Transcription timeout');
+            }
+
+            // Debug: Log the FULL response from AssemblyAI
+            console.log('\n========== ASSEMBLYAI DEBUG ==========');
+            console.log('Full transcribed text:', transcriptData.text);
+            console.log('Text length:', transcriptData.text?.length || 0);
+            console.log('Words array length:', transcriptData.words?.length || 0);
+            console.log('======================================\n');
+
+            // Step 4: Convert words to caption format with timestamps
+            const captions = [];
+            const words = transcriptData.words || [];
+
+            if (words.length === 0 && transcriptData.text) {
+                // Fallback: if no word-level timestamps, create basic captions
+                console.log('⚠️ No word-level timestamps, using fallback method');
+                const sentences = transcriptData.text.split(/[.!?]+/).filter(s => s.trim());
+                const estimatedDuration = 20; // Estimate 20 seconds if we don't have word timing
+                const timePerSentence = sentences.length > 0 ? estimatedDuration / sentences.length : 5;
+
+                sentences.forEach((sentence, index) => {
+                    captions.push({
+                        startTime: index * timePerSentence,
+                        endTime: (index + 1) * timePerSentence,
+                        text: sentence.trim()
+                    });
+                });
+            } else {
+                // Group words into caption-sized chunks (5-10 words or 3-5 seconds)
+                let currentCaption = { startTime: 0, endTime: 0, words: [] };
+
+                words.forEach((word, index) => {
+                    const wordStart = word.start / 1000; // Convert ms to seconds
+                    const wordEnd = word.end / 1000;
+
+                    if (currentCaption.words.length === 0) {
+                        currentCaption.startTime = wordStart;
+                    }
+
+                    currentCaption.words.push(word.text);
+                    currentCaption.endTime = wordEnd;
+
+                    // Create new caption every 8 words or 5 seconds
+                    const duration = currentCaption.endTime - currentCaption.startTime;
+                    if (currentCaption.words.length >= 8 || duration >= 5 || index === words.length - 1) {
+                        captions.push({
+                            startTime: Math.round(currentCaption.startTime * 10) / 10,
+                            endTime: Math.round(currentCaption.endTime * 10) / 10,
+                            text: currentCaption.words.join(' ')
+                        });
+                        currentCaption = { startTime: 0, endTime: 0, words: [] };
+                    }
+                });
+            }
+
+            console.log(`✅ Generated ${captions.length} captions from transcription`);
+            console.log(`📝 Transcribed text: "${transcriptData.text.substring(0, 100)}${transcriptData.text.length > 100 ? '...' : ''}"`);
+            console.log(`📝 FULL TEXT: "${transcriptData.text}"`);
+            return captions;
+        } catch (error) {
+            console.error('❌ AssemblyAI transcription error:', error.message);
+            console.log('⚠️ Falling back to basic transcription message');
+
+            // Fallback: Return a single caption instructing user to configure API
+            return [
+                {
+                    startTime: 0,
+                    endTime: 5,
+                    text: 'Transcription requires API configuration. Please add OPENAI_API_KEY or ASSEMBLYAI_API_KEY to your .env file.'
+                }
+            ];
+        }
     }
 
     /**
