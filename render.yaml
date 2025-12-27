@@ -1,0 +1,20 @@
+# Render.com deployment configuration for backend
+# This file is automatically detected by Render
+
+# Build command
+buildCommand: cd backend && npm install
+
+# Start command  
+startCommand: cd backend && npm start
+
+# Environment
+env: node
+
+# Service type
+type: web
+
+# Health check endpoint
+healthCheckPath: /health
+
+# Auto-deploy on push
+autoDeploy: true
