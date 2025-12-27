@@ -1,0 +1,29 @@
+# Netlify Deployment Configuration
+# This file configures how Netlify builds and deploys the frontend
+
+[build]
+  # Specify the frontend directory
+  base = "frontend/"
+  
+  # Build command for Vite
+  command = "npm run build"
+  
+  # Directory where the built files are
+  publish = "dist"
+
+# Environment variables (set these in Netlify dashboard)
+# VITE_API_URL = "https://your-backend-url.railway.app"
+
+# Redirect rules for SPA routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Headers for security
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    X-XSS-Protection = "1; mode=block"
