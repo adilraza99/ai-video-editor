@@ -138,9 +138,25 @@ const Editor = () => {
 
     const exportVideo = async () => {
         try {
-            toast.info('Starting video export...');
+            toast.info('Preparing video for export...');
             const response = await api.post('/editing/export', { projectId });
-            toast.success('Export complete! Check your downloads.');
+
+            if (response.data.success && response.data.data.downloadUrl) {
+                const { downloadUrl, fileName } = response.data.data;
+
+                // Create download link
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = fileName || 'export.mp4';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                toast.success('Video exported successfully!');
+            } else {
+                toast.warning('No video available to export');
+            }
+
             // Refresh project to show export status
             await fetchProject();
         } catch (error) {

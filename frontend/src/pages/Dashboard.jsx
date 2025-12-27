@@ -199,7 +199,7 @@ const Dashboard = () => {
                       <Video size={16} />
                       My Projects
                     </button>
-                    <button className="dropdown-btn danger" onClick={() => { setProfileOpen(false); handleLogout(); }}>
+                    <button className="dropdown-btn danger" onClick={handleLogout}>
                       <LogOut size={16} />
                       Logout
                     </button>

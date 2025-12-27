@@ -1,4 +1,7 @@
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+
 dotenv.config();
 
 export const config = {
@@ -42,4 +45,22 @@ export const config = {
     awsSecretKey: process.env.AWS_SECRET_ACCESS_KEY || null,
     awsBucket: process.env.AWS_BUCKET || null,
     awsRegion: process.env.AWS_REGION || 'us-east-1',
+};
+
+// Ensure required directories exist
+export const ensureDirectories = () => {
+    const dirs = [
+        config.uploadDir,
+        path.join(config.uploadDir, 'videos'),
+        path.join(config.uploadDir, 'thumbnails'),
+        path.join(config.uploadDir, 'audio'),
+        path.join(config.uploadDir, 'exports')
+    ];
+
+    dirs.forEach(dir => {
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+            console.log(`📁 Created directory: ${dir}`);
+        }
+    });
 };

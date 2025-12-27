@@ -59,8 +59,10 @@ class TranslationService {
                 throw new Error('Translation service unavailable');
             }
         } catch (error) {
-            console.error('Free translation error:', error.message);
-            // Return original text if translation fails
+            console.error('❌ Translation error:', error.message);
+            console.warn(`⚠️ Translation failed for "${text.substring(0, 50)}..." to ${targetLanguage}`);
+            console.warn('⚠️ Returning original text');
+            // Return original text with error indicator if translation fails
             return text;
         }
     }
@@ -88,15 +90,59 @@ class TranslationService {
     }
 
     /**
-     * Get supported languages
+     * Get supported languages (37+ languages)
      */
     getSupportedLanguages() {
         return [
+            // Major languages
             { code: 'en', name: 'English' },
+            { code: 'zh', name: 'Chinese (Simplified)' },
+            { code: 'zh-TW', name: 'Chinese (Traditional)' },
             { code: 'hi', name: 'Hindi' },
             { code: 'es', name: 'Spanish' },
             { code: 'fr', name: 'French' },
-            { code: 'de', name: 'German' }
+            { code: 'ar', name: 'Arabic' },
+            { code: 'bn', name: 'Bengali' },
+            { code: 'pt', name: 'Portuguese' },
+            { code: 'ru', name: 'Russian' },
+            { code: 'ja', name: 'Japanese' },
+            { code: 'de', name: 'German' },
+            { code: 'ko', name: 'Korean' },
+
+            // European languages
+            { code: 'it', name: 'Italian' },
+            { code: 'nl', name: 'Dutch' },
+            { code: 'pl', name: 'Polish' },
+            { code: 'tr', name: 'Turkish' },
+            { code: 'sv', name: 'Swedish' },
+            { code: 'no', name: 'Norwegian' },
+            { code: 'da', name: 'Danish' },
+            { code: 'fi', name: 'Finnish' },
+            { code: 'el', name: 'Greek' },
+            { code: 'cs', name: 'Czech' },
+            { code: 'ro', name: 'Romanian' },
+            { code: 'hu', name: 'Hungarian' },
+
+            // Asian languages
+            { code: 'th', name: 'Thai' },
+            { code: 'vi', name: 'Vietnamese' },
+            { code: 'id', name: 'Indonesian' },
+            { code: 'ms', name: 'Malay' },
+            { code: 'fil', name: 'Filipino' },
+
+            // Middle East & Africa
+            { code: 'he', name: 'Hebrew' },
+            { code: 'fa', name: 'Persian' },
+            { code: 'ur', name: 'Urdu' },
+            { code: 'sw', name: 'Swahili' },
+
+            // Americas
+            { code: 'pt-BR', name: 'Portuguese (Brazil)' },
+            { code: 'es-MX', name: 'Spanish (Mexico)' },
+
+            // Additional
+            { code: 'uk', name: 'Ukrainian' },
+            { code: 'bg', name: 'Bulgarian' }
         ];
     }
 

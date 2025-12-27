@@ -130,8 +130,15 @@ class VideoProcessingService {
                 ffmpeg()
                     .input(videoPath)
                     .input(finalAudioPath)
-                    .outputOptions(['-c:v copy', '-c:a aac', '-map 0:v:0', '-map 1:a:0', '-shortest'])
+                    .outputOptions([
+                        '-c:v copy',      // Copy video stream (no re-encoding)
+                        '-c:a aac',       // Encode audio to AAC
+                        '-map 0:v:0',     // Use video from input 0
+                        '-map 1:a:0'      // Use audio from input 1
+                        // Removed -shortest to preserve full video duration
+                    ])
                     .on('end', () => {
+                        console.log('✅ Video processing complete - video duration preserved');
                         // Cleanup extended audio
                         if (finalAudioPath !== audioPath && fs.existsSync(finalAudioPath)) {
                             fs.unlinkSync(finalAudioPath);
@@ -147,27 +154,40 @@ class VideoProcessingService {
     }
 
     /**
-     * Extend audio by looping to match target duration
+     * Extend audio by adding silence padding to match target duration
      */
     async extendAudio(inputPath, outputPath, targetDuration) {
         return new Promise((resolve, reject) => {
-            // Simple approach: just use the audio as-is and let FFmpeg handle the length
-            // The -shortest flag in replaceAudio will cut it to video length anyway
+            // Use apad filter to add silence padding to match target duration
             ffmpeg(inputPath)
-                .outputOptions([
-                    `-t ${Math.ceil(targetDuration)}`,
-                    '-acodec libmp3lame',
-                    '-ab 192k'
-                ])
+                .audioFilters(`apad=whole_dur=${targetDuration}`)
+                .audioCodec('libmp3lame')
+                .audioBitrate('192k')
                 .on('start', (cmd) => console.log('Audio extension command:', cmd))
                 .on('end', () => {
-                    console.log('Audio extension complete');
+                    console.log(`✅ Audio extended to ${targetDuration}s with silence padding`);
                     resolve(outputPath);
                 })
                 .on('error', (err) => {
-                    console.error('Audio extension error:', err);
-                    // If extension fails, just use original audio
-                    resolve(inputPath);
+                    console.error('❌ Audio extension error:', err);
+                    // If extension fails, try simpler method
+                    console.log('⚠️ Falling back to simple padding method...');
+                    ffmpeg(inputPath)
+                        .outputOptions([
+                            `-t ${Math.ceil(targetDuration)}`,
+                            '-acodec libmp3lame',
+                            '-ab 192k'
+                        ])
+                        .on('end', () => {
+                            console.log('✅ Audio extended using fallback method');
+                            resolve(outputPath);
+                        })
+                        .on('error', () => {
+                            // If both methods fail, use original audio
+                            console.warn('⚠️ Both extension methods failed, using original audio');
+                            resolve(inputPath);
+                        })
+                        .save(outputPath);
                 })
                 .save(outputPath);
         });

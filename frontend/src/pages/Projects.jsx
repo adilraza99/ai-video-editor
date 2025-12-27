@@ -259,7 +259,10 @@ const Projects = () => {
           </nav>
 
           <div className="header-actions">
-            <button className="btn btn-secondary btn-sm">
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => toast.info('Settings feature coming soon!')}
+            >
               <Settings size={16} />
               Settings
             </button>
@@ -857,10 +860,14 @@ const Projects = () => {
           display: flex;
           gap: var(--spacing-sm);
           justify-content: flex-end;
+          position: relative;
+          z-index: 1001;
         }
 
         .modal-actions .btn {
           min-width: 100px;
+          pointer-events: auto;
+          cursor: pointer;
         }
 
         @media (max-width: 768px) {

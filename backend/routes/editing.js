@@ -59,8 +59,16 @@ router.post('/voiceover', protect, async (req, res) => {
         console.log('Generating voiceover audio with tone:', tone);
         console.log('Script text (first 100 chars):', text.substring(0, 100) + '...');
         console.log('Full script length:', text.length, 'characters');
+
+        // Validate and normalize tone
+        const validTones = ['male', 'female', 'child'];
+        const selectedTone = validTones.includes(tone) ? tone : 'male';
+        if (!validTones.includes(tone)) {
+            console.warn(`⚠️ Invalid tone "${tone}", using default "male"`);
+        }
+
         const voiceoverPath = await voiceoverService.generateVoiceover(text, {
-            tone: tone || 'male',  // Default to male voice
+            tone: selectedTone,
             language: language || 'en',
             outputPath: audioOutputPath
         });
@@ -374,7 +382,7 @@ router.post('/dub', protect, async (req, res) => {
         const dubbedAudioPath = path.join(config.uploadDir, 'audio', dubbedAudioFilename);
 
         await voiceoverService.generateVoiceover(translatedText, {
-            tone: tone || 'professional',
+            tone: tone || 'male',  // Use valid tone: male, female, or child
             language: targetLanguage,
             outputPath: dubbedAudioPath,
             speechRate: Math.max(0.1, Math.min(speechRate, 3.0)), // Clamp 0.1x-3.0x
@@ -552,21 +560,49 @@ router.post('/export', protect, async (req, res) => {
             });
         }
 
-        // This would trigger a background job for video processing
-        // For now, just return success
-        project.status = 'processing';
+        // Check if project has a processed video
+        const processedVideos = project.timeline?.tracks?.video?.filter(v =>
+            v.type === 'processed-voiceover' || v.type === 'dubbed'
+        ) || [];
+
+        let exportUrl = null;
+
+        if (processedVideos.length > 0) {
+            // Use the latest processed video
+            const latestVideo = processedVideos[processedVideos.length - 1];
+            exportUrl = latestVideo.url;
+            console.log('✅ Exporting processed video:', latestVideo.name);
+        } else if (project.timeline?.tracks?.video?.length > 0) {
+            // Fall back to original video if no processed version
+            exportUrl = project.timeline.tracks.video[0].url;
+            console.log('✅ Exporting original video');
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: 'No video to export. Please upload a video first.'
+            });
+        }
+
+        // Update project status
+        project.status = 'completed';
+        project.lastExportedAt = new Date();
         await project.save();
 
         res.json({
             success: true,
-            message: 'Video export started',
-            data: { project }
+            message: 'Video ready for export',
+            data: {
+                project,
+                downloadUrl: exportUrl,
+                fileName: `${project.name.replace(/[^a-z0-9]/gi, '_')}_export.mp4`
+            }
         });
     } catch (error) {
         console.error('Export error:', error);
         res.status(500).json({
             success: false,
-            message: 'Failed to start export'
+            message: 'Failed to export video',
+            error: error.message
         });
     }
 });

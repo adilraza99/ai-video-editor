@@ -99,14 +99,16 @@ GOOGLE_TRANSLATE_API_KEY=your_key_here
 ## 🔧 Troubleshooting
 
 ### Port Already in Use
-If port 5001 or 5173 is already in use:
-- Backend: Edit `backend/.env` and change `PORT=5001`
-- Frontend: Edit `frontend/vite.config.js` and change server port
-
-### MongoDB Connection Error
-Make sure MongoDB is running:
+If you see "EADDRINUSE" errors:
 ```bash
-brew services start mongodb-community
+# Kill processes using the ports
+lsof -ti:5001 | xargs kill -9  # Backend
+lsof -ti:5173 | xargs kill -9  # Frontend
+```
+
+Or use the start.sh script which handles this automatically:
+```bash
+./start.sh
 ```
 
 ### FFmpeg Not Found

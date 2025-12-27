@@ -6,11 +6,18 @@
 echo "🚀 Starting Clueso Clone Application..."
 echo ""
 
+# Clean up any existing processes
+echo "🧹 Cleaning up existing processes..."
+lsof -ti:5001 | xargs kill -9 2>/dev/null || true
+lsof -ti:5173 | xargs kill -9 2>/dev/null || true
+
 # Check if MongoDB is running
-if ! pgrep -x "mongod" > /dev/null; then
+if ! pgrep -x "mongod" > /dev/null && ! brew services list | grep mongodb-community | grep started > /dev/null; then
     echo "📦 Starting MongoDB..."
-    mongod --config /opt/homebrew/etc/mongod.conf --fork --logpath /opt/homebrew/var/log/mongodb/mongo.log
+    brew services start mongodb-community
     sleep 2
+else
+    echo "✅ MongoDB already running"
 fi
 
 # Start Backend

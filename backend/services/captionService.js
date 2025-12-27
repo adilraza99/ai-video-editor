@@ -119,12 +119,15 @@ class CaptionService {
      * Provides 100 hours/month of transcription
      */
     async generateWithFreeAlternative(audioPath, language) {
-        try {
-            console.log('🎙️ Transcribing audio with AssemblyAI (free tier)...');
+        // Check if AssemblyAI API key is available
+        if (!config.assemblyAIApiKey) {
+            console.warn('⚠️ AssemblyAI API key not configured, using basic caption generation');
+            return await this.generateBasicCaptions(audioPath, language);
+        }
 
-            // AssemblyAI API key - using a free tier key
-            // For production, add ASSEMBLYAI_API_KEY to .env
-            const apiKey = config.assemblyAIApiKey || 'f7f9e4e4d4d44b4c8e7e2e9e8e7e6e5e'; // Free tier example key
+        try {
+            console.log('🎙️ Transcribing audio with AssemblyAI...');
+            const apiKey = config.assemblyAIApiKey;
 
             // Step 1: Upload audio file
             const uploadUrl = 'https://api.assemblyai.com/v2/upload';
@@ -295,10 +298,11 @@ class CaptionService {
      * Split text into sentences for captions
      */
     splitIntoSentences(text) {
-        // Split by sentence-ending punctuation
+        // Split by sentence-ending punctuation (avoiding regex lookbehind for compatibility)
         const sentences = text
-            .split(/(?<=[.!?])\s+/)
-            .filter(s => s.trim().length > 0);
+            .split(/[.!?]+/)
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
 
         // If sentences are too long, split by commas or phrases
         const MAX_CAPTION_LENGTH = 80;
@@ -426,6 +430,51 @@ class CaptionService {
         // Use the proper translation service
         const translationService = (await import('./translationService.js')).default;
         return await translationService.translateCaptions(captions, targetLanguage);
+    }
+
+    /**
+     * Generate basic captions when no API key is available
+     * Creates timed placeholders based on audio duration
+     */
+    async generateBasicCaptions(audioPath, language) {
+        console.log('📝 Creating basic caption template...');
+
+        try {
+            // Get audio duration using FFmpeg
+            const { stdout } = await execPromise(
+                `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${audioPath}"`
+            );
+            const duration = parseFloat(stdout.trim());
+
+            if (isNaN(duration) || duration <= 0) {
+                throw new Error('Invalid audio duration');
+            }
+
+            // Create 5-second caption slots
+            const captions = [];
+            const captionDuration = 5;
+            const numCaptions = Math.ceil(duration / captionDuration);
+
+            for (let i = 0; i < numCaptions; i++) {
+                captions.push({
+                    startTime: i * captionDuration,
+                    endTime: Math.min((i + 1) * captionDuration, duration),
+                    text: `Caption ${i + 1} - Edit this text to match the audio`
+                });
+            }
+
+            console.log(`✅ Created ${captions.length} caption slots for ${duration.toFixed(1)}s audio`);
+            console.log('💡 Tip: Add OPENAI_API_KEY or ASSEMBLYAI_API_KEY to .env for automatic transcription');
+            return captions;
+        } catch (error) {
+            console.error('❌ Failed to get audio duration:', error.message);
+            // Return minimal fallback
+            return [{
+                startTime: 0,
+                endTime: 10,
+                text: 'Add your caption text here. Configure OPENAI_API_KEY or ASSEMBLYAI_API_KEY for automatic transcription.'
+            }];
+        }
     }
 }
 

@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { connectDB } from './config/db.js';
+import { config, ensureDirectories } from './config/config.js';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -20,6 +21,9 @@ const app = express();
 
 // Connect to MongoDB
 connectDB();
+
+// Ensure upload directories exist
+ensureDirectories();
 
 // Middleware
 app.use(helmet()); // Security headers
@@ -71,9 +75,11 @@ app.use((req, res) => {
     });
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = config.port;
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🔗 API available at: http://localhost:${PORT}`);
+    console.log(`🌐 Frontend proxy configured for: http://localhost:5173`);
 });

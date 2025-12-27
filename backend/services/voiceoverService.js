@@ -121,13 +121,12 @@ class VoiceoverService {
             try {
                 const execPromise = promisify(exec);
 
-                const voiceMap = {
-                    'en-US': 'Alex',      // Male
-                    'en-GB': 'Samantha',  // Female
-                    'en-AU': 'Zarvox'     // Child
-                };
+                // Get language and tone for voice selection
+                const tone = options.tone || 'male';
+                const language = lang || 'en';
 
-                const voice = voiceMap[lang] || 'Alex';
+                // Use language-aware voice selection
+                const voice = this.getVoiceForLanguage(language, tone);
 
                 // Calculate speech rate for macOS say
                 // Default rate is ~175 words/min, we can adjust from 1-500
@@ -135,7 +134,7 @@ class VoiceoverService {
                 const targetDuration = options.targetDuration || null;
                 const sayRate = Math.max(50, Math.min(350, Math.round(175 * speechRate)));
 
-                console.log(`Using macOS voice: ${voice}, rate: ${sayRate} wpm (${speechRate}x) for ${text.length} chars`);
+                console.log(`🎤 Using macOS voice: ${voice} (language: ${language}, tone: ${tone}), rate: ${sayRate} wpm for ${text.length} chars`);
 
                 const tempAiff = outputPath.replace('.mp3', '.aiff');
                 const escapedText = text.replace(/"/g, '\\"');
@@ -374,6 +373,51 @@ class VoiceoverService {
         };
 
         return toneMappings[tone] || toneMappings.male;
+    }
+
+    /**
+     * Get macOS voice for language and tone
+     * Uses language-appropriate voices for better pronunciation
+     */
+    getVoiceForLanguage(language, tone) {
+        // Extract base language code (e.g., 'es-MX' -> 'es')
+        const langCode = language.split('-')[0].toLowerCase();
+
+        // Map of language-specific voices
+        const languageVoices = {
+            'en': { male: 'Alex', female: 'Samantha', child: 'Albert' },
+            'es': { male: 'Jorge', female: 'Paulina', child: 'Paulina' },
+            'fr': { male: 'Thomas', female: 'Amelie', child: 'Amelie' },
+            'de': { male: 'Yannick', female: 'Anna', child: 'Anna' },
+            'it': { male: 'Luca', female: 'Alice', child: 'Alice' },
+            'pt': { male: 'Luciana', female: 'Luciana', child: 'Luciana' },
+            'ru': { male: 'Yuri', female: 'Milena', child: 'Milena' },
+            'zh': { male: 'Ting-Ting', female: 'Ting-Ting', child: 'Ting-Ting' },
+            'ja': { male: 'Kyoko', female: 'Kyoko', child: 'Kyoko' },
+            'ko': { male: 'Yuna', female: 'Yuna', child: 'Yuna' },
+            'hi': { male: 'Lekha', female: 'Lekha', child: 'Lekha' },
+            'ar': { male: 'Maged', female: 'Maged', child: 'Maged' },
+            'tr': { male: 'Yelda', female: 'Yelda', child: 'Yelda' },
+            'nl': { male: 'Xander', female: 'Claire', child: 'Claire' },
+            'pl': { male: 'Zosia', female: 'Zosia', child: 'Zosia' },
+            'sv': { male: 'Alva', female: 'Alva', child: 'Alva' },
+            'no': { male: 'Nora', female: 'Nora', child: 'Nora' },
+            'da': { male: 'Sara', female: 'Sara', child: 'Sara' },
+            'fi': { male: 'Satu', female: 'Satu', child: 'Satu' },
+            'el': { male: 'Melina', female: 'Melina', child: 'Melina' },
+            'cs': { male: 'Zuzana', female: 'Zuzana', child: 'Zuzana' },
+            'ro': { male: 'Ioana', female: 'Ioana', child: 'Ioana' },
+            'hu': { male: 'Mariska', female: 'Mariska', child: 'Mariska' },
+            'th': { male: 'Kanya', female: 'Kanya', child: 'Kanya' },
+            'id': { male: 'Damayanti', female: 'Damayanti', child: 'Damayanti' },
+            'vi': { male: 'Linh', female: 'Linh', child: 'Linh' }
+        };
+
+        // Get voices for this language, fallback to English
+        const voices = languageVoices[langCode] || languageVoices['en'];
+
+        // Get voice for tone, fallback to male
+        return voices[tone] || voices.male || 'Alex';
     }
 
     /**
